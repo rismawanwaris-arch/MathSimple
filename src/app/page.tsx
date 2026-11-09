@@ -515,6 +515,60 @@ export default function Home() {
     setTimeout(() => setCopiedTemplate(null), 2500);
   };
 
+  // Delete a specific session
+  const handleDeleteSession = async (sessionId?: string, participantName?: string) => {
+    if (!sessionId) {
+      alert('ID sesi tidak valid.');
+      return;
+    }
+    const name = participantName || 'Peserta';
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus data ujian peserta "${name}"? Tindakan ini tidak dapat dibatalkan.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/admin/sessions?id=${sessionId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAdminSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        alert(`✅ Data ujian peserta "${name}" berhasil dihapus.`);
+      } else {
+        alert(data.error || 'Gagal menghapus data.');
+      }
+    } catch {
+      alert('Terjadi kesalahan saat menghubungi server.');
+    }
+  };
+
+  // Delete all sessions
+  const handleDeleteAllSessions = async () => {
+    if (adminSessions.length === 0) {
+      alert('Tidak ada data ujian yang tersimpan untuk dihapus.');
+      return;
+    }
+
+    if (!window.confirm(`⚠️ PERINGATAN: Apakah Anda yakin ingin MENGHAPUS SEMUA (${adminSessions.length}) data hasil ujian karyawan?\n\nSeluruh data peserta, skor, dan rekaman jawaban akan dihapus secara permanen.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/sessions?all=true', {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAdminSessions([]);
+        alert('✅ Seluruh data hasil ujian berhasil dihapus.');
+      } else {
+        alert(data.error || 'Gagal menghapus data.');
+      }
+    } catch {
+      alert('Terjadi kesalahan saat menghubungi server.');
+    }
+  };
+
   // Export CSV (Admin only)
   const handleExportCSV = () => {
     const headers = ['ID Sesi', 'Nama Karyawan', 'Waktu Mulai', 'Durasi Setting', 'Benar', 'Total Soal', 'Skor Akhir', 'Perpindahan Tab'];
@@ -1140,14 +1194,25 @@ export default function Home() {
 
                 {/* Leaderboard Table */}
                 <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 shadow-sm">
-                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--border)]">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--border)] flex-wrap gap-2">
                     <h3 className="font-bold text-sm">Daftar Hasil Ujian Karyawan</h3>
-                    <button
-                      onClick={handleExportCSV}
-                      className="px-3 py-1.5 rounded-xl border border-[var(--border)] hover:bg-[var(--background)] text-xs font-medium flex items-center gap-1.5 transition-all"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Unduh CSV
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {adminSessions.length > 0 && (
+                        <button
+                          onClick={handleDeleteAllSessions}
+                          className="px-3 py-1.5 rounded-xl border border-red-300 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                          title="Hapus seluruh data hasil ujian"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Hapus Semua
+                        </button>
+                      )}
+                      <button
+                        onClick={handleExportCSV}
+                        className="px-3 py-1.5 rounded-xl border border-[var(--border)] hover:bg-[var(--background)] text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Unduh CSV
+                      </button>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto rounded-xl">
@@ -1161,12 +1226,13 @@ export default function Home() {
                           <th className="p-3">Benar / Total</th>
                           <th className="p-3">Skor Akhir</th>
                           <th className="p-3">Status</th>
+                          <th className="p-3 text-right">Aksi</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
                         {adminSessions.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="p-4 text-center text-[var(--muted)]">
+                            <td colSpan={8} className="p-4 text-center text-[var(--muted)]">
                               Belum ada data pengerjaan ujian yang tersimpan.
                             </td>
                           </tr>
@@ -1202,6 +1268,16 @@ export default function Home() {
                                 >
                                   {s.total_score >= 75 ? 'Lulus' : 'Remedial'}
                                 </span>
+                              </td>
+                              <td className="p-3 text-right">
+                                <button
+                                  onClick={() => handleDeleteSession(s.id, s.participant_name)}
+                                  className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-all cursor-pointer inline-flex items-center gap-1 font-medium text-xs"
+                                  title={`Hapus data ${s.participant_name}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Hapus</span>
+                                </button>
                               </td>
                             </tr>
                           ))

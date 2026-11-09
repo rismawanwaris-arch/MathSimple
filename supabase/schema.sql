@@ -134,17 +134,22 @@ CREATE POLICY "Service role all exam_settings" ON exam_settings FOR ALL TO servi
 CREATE POLICY "Public read questions" ON questions FOR SELECT USING (true);
 CREATE POLICY "Service role all questions" ON questions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 3. participants: Boleh INSERT oleh publik & service role
+-- 3. participants: Boleh INSERT & DELETE
 CREATE POLICY "Allow insert participants" ON participants FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow select participants" ON participants FOR SELECT USING (true);
+CREATE POLICY "Allow delete participants" ON participants FOR DELETE USING (true);
 CREATE POLICY "Service role all participants" ON participants FOR ALL USING (true) WITH CHECK (true);
 
--- 4. exam_sessions: Boleh INSERT & SELECT (tidak boleh DELETE oleh publik)
+-- 4. exam_sessions: Boleh INSERT, SELECT & DELETE (dikelola HR Admin)
 CREATE POLICY "Allow insert exam_sessions" ON exam_sessions FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow select exam_sessions" ON exam_sessions FOR SELECT USING (true);
+CREATE POLICY "Allow delete exam_sessions" ON exam_sessions FOR DELETE USING (true);
 CREATE POLICY "Service role all exam_sessions" ON exam_sessions FOR ALL USING (true) WITH CHECK (true);
 
--- 5. exam_answers: Boleh INSERT & SELECT (tidak boleh DELETE oleh publik)
+-- 5. exam_answers: Boleh INSERT, SELECT & DELETE (dikelola HR Admin)
 CREATE POLICY "Allow insert exam_answers" ON exam_answers FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow select exam_answers" ON exam_answers FOR SELECT USING (true);
+CREATE POLICY "Allow delete exam_answers" ON exam_answers FOR DELETE USING (true);
 CREATE POLICY "Service role all exam_answers" ON exam_answers FOR ALL USING (true) WITH CHECK (true);
+
 
