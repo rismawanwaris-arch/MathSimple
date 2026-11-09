@@ -42,11 +42,15 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // 1. Fetch sessions directly without risky join syntax
+    // Check participants table directly
+    const { data: allParticipants, error: partErr } = await supabaseServer
+      .from('participants')
+      .select('id, full_name, created_at');
+
+    // Fetch sessions directly
     const { data: rawSessions, error: sessErr } = await supabaseServer
       .from('exam_sessions')
-      .select('id, participant_id, started_at, finished_at, time_limit_minutes, total_score, total_correct, status, tab_switch_count')
-      .order('started_at', { ascending: false });
+      .select('*');
 
     if (sessErr) {
       let friendlyWarning = `Error membaca tabel exam_sessions: ${sessErr.message}`;
@@ -55,7 +59,12 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({
         sessions: [],
-        debug: { ...debugInfo, error: sessErr.message },
+        debug: {
+          ...debugInfo,
+          error: sessErr.message,
+          partCount: allParticipants ? allParticipants.length : 0,
+          partErr: partErr ? partErr.message : null,
+        },
         warning: friendlyWarning,
       });
     }
@@ -94,7 +103,8 @@ export async function GET(req: NextRequest) {
       debug: {
         ...debugInfo,
         rawSessionsLength: rawSessions ? rawSessions.length : 0,
-        rawSample: rawSessions && rawSessions.length > 0 ? rawSessions[0] : null,
+        partCount: allParticipants ? allParticipants.length : 0,
+        partErr: partErr ? partErr.message : null,
       },
     });
   } catch (err: any) {
