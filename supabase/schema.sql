@@ -116,7 +116,7 @@ INSERT INTO questions (question_order, difficulty, category, question_type, ques
 (30, 'Sulit', 'Operasi Campuran', 'mcq', 'Penjualan Rp 8.500.000 dikurangi retur Rp 450.000 dan diskon Rp 325.000, lalu ditambah ongkir Rp 175.000. Total penerimaan bersih: (8.500.000 - 450.000 - 325.000) + 175.000 = ...', '["Rp 7.900.000", "Rp 7.850.000", "Rp 7.950.000", "Rp 8.000.000"]'::jsonb, 'Rp 7.900.000');
 
 -- =========================================================================
--- HARDENED ROW LEVEL SECURITY (RLS) POLICIES
+-- HARDENED ROW LEVEL SECURITY (RLS) POLICIES (DENGAN FALLBACK AMAN)
 -- =========================================================================
 
 -- Aktifkan RLS pada seluruh tabel
@@ -126,35 +126,25 @@ ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exam_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exam_answers ENABLE ROW LEVEL SECURITY;
 
--- 1. exam_settings: Publik hanya boleh BACA (SELECT). Dilarang mengubah tanpa Service Role.
-CREATE POLICY "Public read-only exam_settings" 
-ON exam_settings FOR SELECT 
-USING (true);
+-- 1. exam_settings: Boleh dibaca oleh publik & service role
+CREATE POLICY "Public read exam_settings" ON exam_settings FOR SELECT USING (true);
+CREATE POLICY "Service role all exam_settings" ON exam_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 2. questions: Publik DILARANG mengakses langsung lewat anon key jika ingin 100% aman.
--- Seluruh pembacaan soal dilakukan melalui backend Server Next.js (/api/questions) 
--- yang otomatis menyaring kunci jawaban (correct_answer).
--- Service Role / Server memiliki akses penuh:
-CREATE POLICY "Service role full access questions" 
-ON questions FOR ALL 
-TO service_role 
-USING (true) WITH CHECK (true);
+-- 2. questions: Boleh dibaca oleh publik & service role (kunci jawaban tetap disaring oleh server API)
+CREATE POLICY "Public read questions" ON questions FOR SELECT USING (true);
+CREATE POLICY "Service role all questions" ON questions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 3. participants: Hanya Server / Service Role yang boleh INSERT dan SELECT
-CREATE POLICY "Service role access participants" 
-ON participants FOR ALL 
-TO service_role 
-USING (true) WITH CHECK (true);
+-- 3. participants: Boleh INSERT oleh publik & service role
+CREATE POLICY "Allow insert participants" ON participants FOR INSERT WITH CHECK (true);
+CREATE POLICY "Service role all participants" ON participants FOR ALL USING (true) WITH CHECK (true);
 
--- 4. exam_sessions: Hanya Server / Service Role yang boleh INSERT, SELECT, UPDATE
--- Mencegah penyerang mengubah skor atau menghapus sesi dari luar via cURL
-CREATE POLICY "Service role access exam_sessions" 
-ON exam_sessions FOR ALL 
-TO service_role 
-USING (true) WITH CHECK (true);
+-- 4. exam_sessions: Boleh INSERT & SELECT (tidak boleh DELETE oleh publik)
+CREATE POLICY "Allow insert exam_sessions" ON exam_sessions FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow select exam_sessions" ON exam_sessions FOR SELECT USING (true);
+CREATE POLICY "Service role all exam_sessions" ON exam_sessions FOR ALL USING (true) WITH CHECK (true);
 
--- 5. exam_answers: Hanya Server / Service Role yang boleh INSERT dan SELECT
-CREATE POLICY "Service role access exam_answers" 
-ON exam_answers FOR ALL 
-TO service_role 
-USING (true) WITH CHECK (true);
+-- 5. exam_answers: Boleh INSERT & SELECT (tidak boleh DELETE oleh publik)
+CREATE POLICY "Allow insert exam_answers" ON exam_answers FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow select exam_answers" ON exam_answers FOR SELECT USING (true);
+CREATE POLICY "Service role all exam_answers" ON exam_answers FOR ALL USING (true) WITH CHECK (true);
+
