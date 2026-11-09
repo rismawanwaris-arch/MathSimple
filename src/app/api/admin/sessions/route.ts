@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminToken } from '@/lib/auth';
-import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabaseServer';
+import { supabaseServer, isServerSupabaseConfigured, supabaseUrl } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,14 +11,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Akses ditolak. Silakan login sebagai HR Admin.' }, { status: 401 });
   }
 
-  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
   const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY);
   const hasService = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const debugInfo = {
     isConfigured: isServerSupabaseConfigured,
     hasUrl: Boolean(supabaseUrl),
-    urlPreview: supabaseUrl ? `${supabaseUrl.slice(0, 15)}...` : 'KOSONG',
+    urlPreview: supabaseUrl || 'KOSONG',
     hasAnonKey: hasAnon,
     hasServiceRoleKey: hasService,
   };
@@ -39,10 +38,14 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false });
 
     if (sessErr) {
+      let friendlyWarning = `Error membaca tabel exam_sessions: ${sessErr.message}`;
+      if (sessErr.message.includes('relation') && sessErr.message.includes('does not exist')) {
+        friendlyWarning = 'Tabel "exam_sessions" belum dibuat di database Supabase Anda. Buka menu SQL Editor di Supabase, lalu jalankan file supabase/schema.sql.';
+      }
       return NextResponse.json({
         sessions: [],
         debug: { ...debugInfo, error: sessErr.message },
-        warning: `Error membaca tabel exam_sessions: ${sessErr.message}`,
+        warning: friendlyWarning,
       });
     }
 
