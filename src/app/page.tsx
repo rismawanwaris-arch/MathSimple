@@ -23,23 +23,31 @@ import {
   Shield,
   Layers,
   HelpCircle,
+  Lock,
+  LogOut,
+  EyeOff,
 } from 'lucide-react';
 import { Question, ExamSettings, ExamSession } from '@/types';
 import { defaultQuestions } from '@/data/defaultQuestions';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export default function Home() {
   // Views: 'intro' | 'exam' | 'result' | 'admin'
   const [activeView, setActiveView] = useState<'intro' | 'exam' | 'result' | 'admin'>('intro');
   const [adminTab, setAdminTab] = useState<'scores' | 'questions' | 'settings' | 'ai'>('scores');
 
-  // Exam Configuration & Bank Soal
+  // Exam Configuration & Sanitized Questions (Zero answer leakage!)
   const [examSettings, setExamSettings] = useState<ExamSettings>({
     duration_minutes: 15,
     autosubmit: true,
     warning_minutes: 2,
   });
-  const [questions, setQuestions] = useState<Question[]>(defaultQuestions);
+  
+  // Strip out answers from default fallback questions immediately for client safety
+  const safeDefaultQuestions = defaultQuestions.map((q) => ({
+    ...q,
+    correct_answer: '', // sanitized
+  }));
+  const [questions, setQuestions] = useState<Question[]>(safeDefaultQuestions);
 
   // Participant & Active Session State
   const [fullName, setFullName] = useState('');
@@ -48,42 +56,18 @@ export default function Home() {
   const [flaggedQuestions, setFlaggedQuestions] = useState<number[]>([]);
   const [timeLeft, setTimeLeft] = useState(examSettings.duration_minutes * 60);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [examStartTime, setExamStartTime] = useState<string>('');
+  const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
   const [submissionReference, setSubmissionReference] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Mock Admin Sessions (combined with real if Supabase available)
-  const [examSessions, setExamSessions] = useState<ExamSession[]>([
-    {
-      id: 'sess-01',
-      participant_name: 'Budi Santoso',
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      finished_at: new Date(Date.now() - 2700000).toISOString(),
-      time_limit_minutes: 15,
-      total_score: 86.7,
-      total_correct: 26,
-      status: 'completed',
-    },
-    {
-      id: 'sess-02',
-      participant_name: 'Siti Aminah',
-      started_at: new Date(Date.now() - 7200000).toISOString(),
-      finished_at: new Date(Date.now() - 6350000).toISOString(),
-      time_limit_minutes: 15,
-      total_score: 96.7,
-      total_correct: 29,
-      status: 'completed',
-    },
-    {
-      id: 'sess-03',
-      participant_name: 'Rian Pratama',
-      started_at: new Date(Date.now() - 10800000).toISOString(),
-      finished_at: new Date(Date.now() - 9900000).toISOString(),
-      time_limit_minutes: 15,
-      total_score: 70.0,
-      total_correct: 21,
-      status: 'completed',
-    },
-  ]);
+  // Admin Authentication & Session State
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [adminAuthError, setAdminAuthError] = useState('');
+  const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
+  const [adminSessions, setAdminSessions] = useState<ExamSession[]>([]);
+  const [adminQuestionsWithKeys, setAdminQuestionsWithKeys] = useState<Question[]>([]);
 
   // Question CRUD Modal State
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -104,66 +88,48 @@ export default function Home() {
   // Timer Ref
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch Questions & Settings from Supabase on Mount (if configured)
+  // 1. Fetch Sanitized Questions & Public Settings from Secure API on Mount
   useEffect(() => {
-    async function loadSupabaseData() {
-      if (!isSupabaseConfigured || !supabase) return;
-
+    async function loadPublicData() {
       try {
-        // Load Settings
-        const { data: settingsData } = await supabase
-          .from('exam_settings')
-          .select('*')
-          .eq('id', 1)
-          .single();
-
-        if (settingsData) {
-          setExamSettings({
-            duration_minutes: settingsData.duration_minutes || 15,
-            autosubmit: settingsData.autosubmit ?? true,
-            warning_minutes: settingsData.warning_minutes || 2,
-          });
-          setTimeLeft((settingsData.duration_minutes || 15) * 60);
-        }
-
-        // Load Questions
-        const { data: questionsData } = await supabase
-          .from('questions')
-          .select('*')
-          .order('question_order', { ascending: true });
-
-        if (questionsData && questionsData.length > 0) {
-          setQuestions(questionsData);
-        }
-
-        // Load Sessions
-        const { data: sessionsData } = await supabase
-          .from('exam_sessions')
-          .select('*, participants(full_name)')
-          .order('started_at', { ascending: false });
-
-        if (sessionsData && sessionsData.length > 0) {
-          const formatted = sessionsData.map((s: any) => ({
-            id: s.id,
-            participant_name: s.participants?.full_name || 'Peserta',
-            started_at: s.started_at,
-            finished_at: s.finished_at,
-            time_limit_minutes: s.time_limit_minutes,
-            total_score: Number(s.total_score),
-            total_correct: s.total_correct,
-            status: s.status,
-          }));
-          setExamSessions(formatted);
+        const res = await fetch('/api/questions', { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.questions && data.questions.length > 0) {
+            setQuestions(data.questions);
+          }
         }
       } catch (err) {
-        console.warn('Gagal memuat data dari Supabase, beralih ke mode lokal:', err);
+        console.warn('Menggunakan fallback data lokal yang telah disanitasi.');
       }
     }
-
-    loadSupabaseData();
+    loadPublicData();
   }, []);
 
-  // Timer Effect
+  // 2. Anti-Cheat: Detect Tab Switching / Focus Loss
+  useEffect(() => {
+    if (activeView !== 'exam' || !isTimerRunning) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setTabSwitchCount((prev) => prev + 1);
+      }
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault(); // Prevent right-click copying during exam
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, [activeView, isTimerRunning]);
+
+  // 3. Countdown Timer Effect
   useEffect(() => {
     if (isTimerRunning && timeLeft > 0) {
       timerRef.current = setInterval(() => {
@@ -198,6 +164,9 @@ export default function Home() {
     setUserAnswers({});
     setFlaggedQuestions([]);
     setCurrentQIndex(0);
+    setTabSwitchCount(0);
+    const startIso = new Date().toISOString();
+    setExamStartTime(startIso);
     setTimeLeft(examSettings.duration_minutes * 60);
     setIsTimerRunning(true);
     setActiveView('exam');
@@ -218,9 +187,9 @@ export default function Home() {
     );
   };
 
-  // Submit Exam
+  // Submit Exam (Handled by Server-Side Evaluation API)
   const handleAutoSubmit = () => {
-    alert('⏱️ Waktu ujian telah habis! Jawaban Anda otomatis dikirimkan.');
+    alert('⏱️ Waktu ujian telah habis! Jawaban Anda otomatis dikirimkan ke server.');
     handleSubmitExam();
   };
 
@@ -229,7 +198,11 @@ export default function Home() {
     const unanswered = questions.length - answeredCount;
     const flaggedCount = flaggedQuestions.length;
 
-    const message = `Konfirmasi Kumpulkan Ujian:\n\n- Terjawab: ${answeredCount} dari ${questions.length} soal\n- Belum Dijawab: ${unanswered} soal\n- Ditandai Ragu-ragu: ${flaggedCount} soal\n\nApakah Anda yakin ingin menyelesaikan ujian sekarang?`;
+    let message = `Konfirmasi Kumpulkan Ujian:\n\n- Terjawab: ${answeredCount} dari ${questions.length} soal\n- Belum Dijawab: ${unanswered} soal\n- Ditandai Ragu-ragu: ${flaggedCount} soal`;
+    if (tabSwitchCount > 0) {
+      message += `\n- Peringatan: Terdeteksi ${tabSwitchCount}x berpindah tab/jendela.`;
+    }
+    message += `\n\nApakah Anda yakin ingin menyelesaikan ujian sekarang?`;
 
     if (window.confirm(message)) {
       handleSubmitExam();
@@ -240,82 +213,35 @@ export default function Home() {
     setIsSubmitting(true);
     setIsTimerRunning(false);
 
-    // Calculate score
-    let correctCount = 0;
-    questions.forEach((q) => {
-      const userAns = (userAnswers[q.id] || '').trim().toLowerCase();
-      const correctAns = q.correct_answer.trim().toLowerCase();
-      if (userAns && userAns === correctAns) {
-        correctCount++;
+    try {
+      // POST answers to Server-Side grading endpoint
+      const response = await fetch('/api/submit-exam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName,
+          answers: userAnswers,
+          startedAt: examStartTime || new Date().toISOString(),
+          tabSwitchCount,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setSubmissionReference(result.referenceCode);
+      } else {
+        // Fallback reference code
+        setSubmissionReference(`SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
       }
-    });
-
-    const score = Number(((correctCount / questions.length) * 100).toFixed(1));
-    const refCode = `SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
-    setSubmissionReference(refCode);
-
-    // Save to Supabase (if configured)
-    if (isSupabaseConfigured && supabase) {
-      try {
-        // 1. Insert participant
-        const { data: pData } = await supabase
-          .from('participants')
-          .insert({ full_name: fullName })
-          .select('id')
-          .single();
-
-        if (pData) {
-          // 2. Insert session
-          const { data: sData } = await supabase
-            .from('exam_sessions')
-            .insert({
-              participant_id: pData.id,
-              time_limit_minutes: examSettings.duration_minutes,
-              total_score: score,
-              total_correct: correctCount,
-              status: 'completed',
-              finished_at: new Date().toISOString(),
-            })
-            .select('id')
-            .single();
-
-          if (sData) {
-            // 3. Insert individual answers
-            const answersToInsert = questions.map((q) => {
-              const uAns = (userAnswers[q.id] || '').trim();
-              const isCorrect = uAns.toLowerCase() === q.correct_answer.trim().toLowerCase();
-              return {
-                session_id: sData.id,
-                question_id: q.id,
-                submitted_answer: uAns,
-                is_correct: isCorrect,
-              };
-            });
-            await supabase.from('exam_answers').insert(answersToInsert);
-          }
-        }
-      } catch (err) {
-        console.error('Error saving to Supabase:', err);
-      }
+    } catch (err) {
+      setSubmissionReference(`SUBMIT-OFFLINE-${Math.floor(1000 + Math.random() * 9000)}`);
     }
-
-    // Add to local state sessions
-    const newSession: ExamSession = {
-      id: refCode,
-      participant_name: fullName,
-      started_at: new Date(Date.now() - (examSettings.duration_minutes * 60 - timeLeft) * 1000).toISOString(),
-      finished_at: new Date().toISOString(),
-      time_limit_minutes: examSettings.duration_minutes,
-      total_score: score,
-      total_correct: correctCount,
-      status: 'completed',
-    };
-    setExamSessions((prev) => [newSession, ...prev]);
 
     setIsSubmitting(false);
     setActiveView('result');
 
-    // Trigger celebration confetti
+    // Celebration confetti
     try {
       confetti({
         particleCount: 80,
@@ -327,33 +253,110 @@ export default function Home() {
     }
   };
 
-  // Duration Setting Update
-  const handleUpdateDuration = async (minutes: number) => {
-    setExamSettings((prev) => ({
-      ...prev,
-      duration_minutes: minutes,
-    }));
-    setTimeLeft(minutes * 60);
-
-    if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase
-          .from('exam_settings')
-          .update({ duration_minutes: minutes })
-          .eq('id', 1);
-      } catch (err) {
-        console.error('Failed to update duration in Supabase:', err);
-      }
+  // Admin PIN Authentication Handlers
+  const handleOpenAdmin = () => {
+    if (isAdminAuthenticated) {
+      setActiveView('admin');
+      loadAdminDashboardData();
+    } else {
+      setAdminAuthError('');
+      setAdminPinInput('');
+      setIsAdminAuthModalOpen(true);
     }
-
-    alert(`✅ Batas waktu ujian berhasil diperbarui menjadi ${minutes} Menit!`);
   };
 
-  // Question CRUD Operations
+  const handleVerifyAdminPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminAuthError('');
+
+    try {
+      const res = await fetch('/api/admin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: adminPinInput }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsAdminAuthenticated(true);
+        setIsAdminAuthModalOpen(false);
+        setActiveView('admin');
+        loadAdminDashboardData();
+      } else {
+        setAdminAuthError(data.error || 'PIN yang Anda masukkan salah.');
+      }
+    } catch {
+      setAdminAuthError('Gagal menghubungkan ke server autentikasi.');
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    await fetch('/api/admin/auth', { method: 'DELETE' });
+    setIsAdminAuthenticated(false);
+    setActiveView('intro');
+  };
+
+  // Load Admin Data (Sessions, Full Questions with Keys, Settings)
+  const loadAdminDashboardData = async () => {
+    try {
+      // 1. Load Sessions
+      const sessRes = await fetch('/api/admin/sessions');
+      if (sessRes.ok) {
+        const sData = await sessRes.json();
+        setAdminSessions(sData.sessions || []);
+      }
+
+      // 2. Load Full Questions (Admin only)
+      const qRes = await fetch('/api/admin/questions');
+      if (qRes.ok) {
+        const qData = await qRes.json();
+        setAdminQuestionsWithKeys(qData.questions || []);
+      }
+
+      // 3. Load Settings
+      const setRes = await fetch('/api/admin/settings');
+      if (setRes.ok) {
+        const setData = await setRes.json();
+        if (setData.settings) {
+          setExamSettings({
+            duration_minutes: setData.settings.duration_minutes || 15,
+            autosubmit: setData.settings.autosubmit ?? true,
+            warning_minutes: setData.settings.warning_minutes || 2,
+          });
+          setTimeLeft((setData.settings.duration_minutes || 15) * 60);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading admin dashboard data:', err);
+    }
+  };
+
+  // Duration Setting Update (Admin only)
+  const handleUpdateDuration = async (minutes: number) => {
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ duration_minutes: minutes }),
+      });
+
+      if (res.ok) {
+        setExamSettings((prev) => ({ ...prev, duration_minutes: minutes }));
+        setTimeLeft(minutes * 60);
+        alert(`✅ Batas waktu ujian berhasil diperbarui menjadi ${minutes} Menit!`);
+      } else {
+        alert('Gagal memperbarui waktu di server.');
+      }
+    } catch {
+      alert('Terjadi kesalahan jaringan.');
+    }
+  };
+
+  // Question CRUD Operations (Admin only)
   const handleOpenAddQuestion = () => {
     setEditingQuestionIndex(null);
     setModalFormData({
-      question_order: questions.length + 1,
+      question_order: (adminQuestionsWithKeys.length || questions.length) + 1,
       difficulty: 'Mudah',
       category: 'Pertambahan',
       question_type: 'mcq',
@@ -366,7 +369,8 @@ export default function Home() {
   };
 
   const handleOpenEditQuestion = (index: number) => {
-    const q = questions[index];
+    const list = adminQuestionsWithKeys.length > 0 ? adminQuestionsWithKeys : questions;
+    const q = list[index];
     setEditingQuestionIndex(index);
     setModalFormData({
       id: q.id,
@@ -376,7 +380,7 @@ export default function Home() {
       question_type: q.question_type,
       question_text: q.question_text,
       options: q.options ? [...q.options] : ['', '', '', ''],
-      correct_answer: q.correct_answer,
+      correct_answer: q.correct_answer || '',
       points: q.points || 10,
     });
     setIsQuestionModalOpen(true);
@@ -391,7 +395,7 @@ export default function Home() {
 
     const updatedQ: Question = {
       id: modalFormData.id || Date.now(),
-      question_order: modalFormData.question_order || questions.length + 1,
+      question_order: modalFormData.question_order || 1,
       difficulty: modalFormData.difficulty || 'Mudah',
       category: modalFormData.category || 'Pertambahan',
       question_type: modalFormData.question_type || 'mcq',
@@ -401,49 +405,44 @@ export default function Home() {
       points: 10,
     };
 
-    let nextQuestions = [...questions];
-    if (editingQuestionIndex !== null) {
-      nextQuestions[editingQuestionIndex] = updatedQ;
-    } else {
-      nextQuestions.push(updatedQ);
-    }
-    setQuestions(nextQuestions);
-    setIsQuestionModalOpen(false);
+    try {
+      const method = editingQuestionIndex !== null ? 'PUT' : 'POST';
+      const res = await fetch('/api/admin/questions', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: updatedQ }),
+      });
 
-    // Save to Supabase
-    if (isSupabaseConfigured && supabase) {
-      try {
-        if (editingQuestionIndex !== null && modalFormData.id) {
-          await supabase.from('questions').update(updatedQ).eq('id', modalFormData.id);
-        } else {
-          await supabase.from('questions').insert([updatedQ]);
-        }
-      } catch (err) {
-        console.error('Gagal menyimpan soal ke Supabase:', err);
+      if (res.ok) {
+        setIsQuestionModalOpen(false);
+        loadAdminDashboardData();
+        alert('✅ Soal berhasil disimpan ke database!');
+      } else {
+        alert('Gagal menyimpan soal.');
       }
+    } catch {
+      alert('Terjadi kesalahan jaringan.');
     }
-
-    alert('✅ Soal berhasil disimpan ke Bank Soal!');
   };
 
   const handleDeleteQuestion = async (index: number) => {
-    const q = questions[index];
+    const list = adminQuestionsWithKeys.length > 0 ? adminQuestionsWithKeys : questions;
+    const q = list[index];
     if (!window.confirm(`Hapus butir soal No. ${index + 1}?`)) return;
 
-    const nextQuestions = questions.filter((_, idx) => idx !== index);
-    setQuestions(nextQuestions);
-
-    if (isSupabaseConfigured && supabase && q.id) {
-      try {
-        await supabase.from('questions').delete().eq('id', q.id);
-      } catch (err) {
-        console.error('Gagal menghapus soal dari Supabase:', err);
+    try {
+      const res = await fetch(`/api/admin/questions?id=${q.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadAdminDashboardData();
+        alert('✅ Soal berhasil dihapus.');
       }
+    } catch {
+      alert('Gagal menghapus soal.');
     }
   };
 
-  // AI Import JSON
-  const handleImportJson = () => {
+  // AI Import JSON (Admin only)
+  const handleImportJson = async () => {
     try {
       const parsed = JSON.parse(aiJsonInput.trim());
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -458,10 +457,21 @@ export default function Home() {
           correct_answer: item.correct_answer || '',
           points: 10,
         }));
-        setQuestions(formatted);
-        setAiJsonInput('');
-        alert(`🎉 Sukses mengimpor ${formatted.length} butir soal baru ke Bank Soal!`);
-        setAdminTab('questions');
+
+        const res = await fetch('/api/admin/questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ questions: formatted }),
+        });
+
+        if (res.ok) {
+          setAiJsonInput('');
+          loadAdminDashboardData();
+          alert(`🎉 Sukses mengimpor ${formatted.length} butir soal baru ke Bank Soal!`);
+          setAdminTab('questions');
+        } else {
+          alert('Gagal menyimpan paket soal ke server.');
+        }
       } else {
         alert('Format JSON harus berupa array berisi kumpulan objek soal.');
       }
@@ -477,10 +487,10 @@ export default function Home() {
     setTimeout(() => setCopiedTemplate(null), 2500);
   };
 
-  // Export CSV
+  // Export CSV (Admin only)
   const handleExportCSV = () => {
-    const headers = ['ID Sesi', 'Nama Karyawan', 'Waktu Mulai', 'Durasi Setting', 'Benar', 'Total Soal', 'Skor Akhir'];
-    const rows = examSessions.map((s) => [
+    const headers = ['ID Sesi', 'Nama Karyawan', 'Waktu Mulai', 'Durasi Setting', 'Benar', 'Total Soal', 'Skor Akhir', 'Perpindahan Tab'];
+    const rows = adminSessions.map((s) => [
       s.id,
       `"${s.participant_name}"`,
       new Date(s.started_at).toLocaleString('id-ID'),
@@ -488,6 +498,7 @@ export default function Home() {
       s.total_correct,
       questions.length,
       s.total_score,
+      s.tab_switch_count || 0,
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
@@ -507,7 +518,7 @@ export default function Home() {
   const progressPercent = Math.round((answeredCount / (questions.length || 1)) * 100);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-3 md:p-6 transition-colors">
+    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-3 md:p-6 transition-colors select-none">
       {/* TOP BAR / NAVIGATION */}
       <header className="max-w-6xl mx-auto mb-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -516,7 +527,7 @@ export default function Home() {
           </div>
           <div>
             <h1 className="text-base md:text-lg font-bold tracking-tight">MathSimple Employee Assessment</h1>
-            <p className="text-xs text-[var(--muted)]">Tes Ketelitian Berhitung & Nominal (Supabase & Vercel)</p>
+            <p className="text-xs text-[var(--muted)]">Sistem Asesmen Matematika & Ketelitian Karyawan (Hardened & Protected)</p>
           </div>
         </div>
 
@@ -543,12 +554,12 @@ export default function Home() {
             Ujian ({examSettings.duration_minutes}m)
           </button>
           <button
-            onClick={() => setActiveView('admin')}
+            onClick={handleOpenAdmin}
             className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
               activeView === 'admin' ? 'bg-[var(--card)] text-purple-600 font-bold shadow-xs' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
             }`}
           >
-            <Shield className="w-3.5 h-3.5 text-purple-600" />
+            <Lock className="w-3.5 h-3.5 text-purple-600" />
             Dashboard HR
           </button>
         </div>
@@ -600,7 +611,7 @@ export default function Home() {
               </div>
               <div className="flex items-start gap-2 text-[var(--muted)]">
                 <span className="text-blue-600 font-bold">•</span>
-                <span>Waktu <strong>{examSettings.duration_minutes} Menit</strong> berjalan otomatis. Jawaban disimpan langsung ke sistem HR.</span>
+                <span><strong>Sistem Pengawasan:</strong> Perpindahan tab browser terdeteksi otomatis oleh sistem pengawas HR.</span>
               </div>
             </div>
 
@@ -616,7 +627,7 @@ export default function Home() {
                   placeholder="Ketikkan nama lengkap Anda..."
                   className="w-full px-4 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] text-base font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
-                <p className="text-[11px] text-[var(--muted)] mt-1.5">Hanya membutuhkan nama Anda untuk memulai ujian.</p>
+                <p className="text-[11px] text-[var(--muted)] mt-1.5">Cukup masukkan nama Anda untuk memulai ujian.</p>
               </div>
 
               <button
@@ -631,7 +642,7 @@ export default function Home() {
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 2: EXAM PANEL                                                      */}
+        {/* VIEW 2: EXAM PANEL (HARDENED ANTI-CHEAT)                                */}
         {/* ========================================================================= */}
         {activeView === 'exam' && (
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -654,9 +665,12 @@ export default function Home() {
                   <span className="px-2.5 py-1 text-xs font-medium rounded-lg bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
                     {currentQ.category}
                   </span>
-                  <span className="px-2 py-0.5 text-[11px] font-mono rounded bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                    {currentQ.question_type === 'mcq' ? 'Pilihan Ganda' : 'Isian Singkat'}
-                  </span>
+                  {tabSwitchCount > 0 && (
+                    <span className="px-2 py-0.5 text-[11px] font-semibold rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      Pindah Tab: {tabSwitchCount}x
+                    </span>
+                  )}
                 </div>
 
                 {/* Countdown Timer */}
@@ -857,7 +871,7 @@ export default function Home() {
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 3: CONFIRMATION / RECEIPT FOR PARTICIPANT (SKOR DIRAHASIAKAN)       */}
+        {/* VIEW 3: CONFIRMATION / RECEIPT (ZERO LEAKAGE)                           */}
         {/* ========================================================================= */}
         {activeView === 'result' && (
           <section className="max-w-xl mx-auto bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm text-center">
@@ -866,7 +880,7 @@ export default function Home() {
             </div>
             <h2 className="text-2xl font-bold">Ujian Selesai & Berhasil Dikirim!</h2>
             <p className="text-sm text-[var(--muted)] mt-2">
-              Terima kasih telah menyelesaikan seluruh butir soal tes matematika dan ketelitian nominal. Jawaban Anda telah tersimpan dengan aman di database.
+              Terima kasih telah menyelesaikan seluruh rangkaian tes ketelitian matematika. Jawaban Anda telah tersimpan dan dievaluasi dengan aman di server HR.
             </p>
 
             {/* Receipt Card */}
@@ -892,7 +906,7 @@ export default function Home() {
             </div>
 
             <div className="p-3.5 mb-6 rounded-xl bg-gray-500/10 border border-gray-500/20 text-xs text-[var(--muted)]">
-              <strong>Catatan:</strong> Nilai akhir dan analisis evaluasi tes bersifat rahasia perusahaan dan akan langsung diperiksa oleh tim HRD.
+              <strong>Catatan:</strong> Nilai akhir dan analisis evaluasi tes bersifat rahasia perusahaan dan hanya dapat diakses oleh tim HRD.
             </div>
 
             <div className="flex gap-3">
@@ -906,19 +920,19 @@ export default function Home() {
                 Kembali ke Halaman Depan
               </button>
               <button
-                onClick={() => setActiveView('admin')}
+                onClick={handleOpenAdmin}
                 className="py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5"
               >
-                <Shield className="w-3.5 h-3.5" /> Akses HR Admin
+                <Lock className="w-3.5 h-3.5" /> Akses HR Admin
               </button>
             </div>
           </section>
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 4: HR ADMIN DASHBOARD (LEADERBOARD, CRUD SOAL, TIMER, AI PROMPTS)    */}
+        {/* VIEW 4: PROTECTED HR ADMIN DASHBOARD                                     */}
         {/* ========================================================================= */}
-        {activeView === 'admin' && (
+        {activeView === 'admin' && isAdminAuthenticated && (
           <section className="space-y-6">
             {/* Admin Header & Tabs */}
             <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -926,42 +940,53 @@ export default function Home() {
                 <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
                   HR Admin Center
                 </span>
-                <span className="text-xs text-[var(--muted)]">Manajemen Nilai, Bank Soal & Durasi</span>
+                <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
+                  <Shield className="w-3.5 h-3.5" /> Terotentikasi Aman
+                </span>
               </div>
 
-              {/* Subtabs */}
-              <div className="flex items-center gap-1 bg-[var(--background)] p-1 rounded-xl border border-[var(--border)] text-xs font-medium">
+              {/* Subtabs & Logout */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex items-center gap-1 bg-[var(--background)] p-1 rounded-xl border border-[var(--border)] text-xs font-medium">
+                  <button
+                    onClick={() => setAdminTab('scores')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      adminTab === 'scores' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
+                    }`}
+                  >
+                    📊 Rekap Nilai
+                  </button>
+                  <button
+                    onClick={() => setAdminTab('questions')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      adminTab === 'questions' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
+                    }`}
+                  >
+                    📝 Bank Soal ({adminQuestionsWithKeys.length || questions.length})
+                  </button>
+                  <button
+                    onClick={() => setAdminTab('settings')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      adminTab === 'settings' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
+                    }`}
+                  >
+                    ⏱️ Atur Waktu Ujian
+                  </button>
+                  <button
+                    onClick={() => setAdminTab('ai')}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                      adminTab === 'ai' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
+                    }`}
+                  >
+                    🤖 AI Prompting
+                  </button>
+                </div>
+
                 <button
-                  onClick={() => setAdminTab('scores')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${
-                    adminTab === 'scores' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
-                  }`}
+                  onClick={handleAdminLogout}
+                  className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all"
                 >
-                  📊 Rekap Nilai
-                </button>
-                <button
-                  onClick={() => setAdminTab('questions')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${
-                    adminTab === 'questions' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
-                  }`}
-                >
-                  📝 Bank Soal ({questions.length})
-                </button>
-                <button
-                  onClick={() => setAdminTab('settings')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${
-                    adminTab === 'settings' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
-                  }`}
-                >
-                  ⏱️ Atur Waktu Ujian
-                </button>
-                <button
-                  onClick={() => setAdminTab('ai')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${
-                    adminTab === 'ai' ? 'bg-[var(--card)] text-[var(--foreground)] font-bold shadow-xs' : 'text-[var(--muted)]'
-                  }`}
-                >
-                  🤖 AI Prompting
+                  <LogOut className="w-3.5 h-3.5" /> Logout
                 </button>
               </div>
             </div>
@@ -973,14 +998,14 @@ export default function Home() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm">
                     <span className="text-xs text-[var(--muted)]">Total Peserta Selesai</span>
-                    <div className="text-2xl font-extrabold mt-1">{examSessions.length}</div>
-                    <span className="text-[11px] text-emerald-600 font-medium">Auto-Graded</span>
+                    <div className="text-2xl font-extrabold mt-1">{adminSessions.length}</div>
+                    <span className="text-[11px] text-emerald-600 font-medium">Server-Graded</span>
                   </div>
                   <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm">
                     <span className="text-xs text-[var(--muted)]">Rata-rata Skor</span>
                     <div className="text-2xl font-extrabold mt-1 text-blue-600">
-                      {examSessions.length > 0
-                        ? (examSessions.reduce((acc, s) => acc + s.total_score, 0) / examSessions.length).toFixed(1)
+                      {adminSessions.length > 0
+                        ? (adminSessions.reduce((acc, s) => acc + s.total_score, 0) / adminSessions.length).toFixed(1)
                         : '0.0'}
                     </div>
                     <span className="text-[11px] text-blue-600 font-medium">Skala 100</span>
@@ -988,8 +1013,8 @@ export default function Home() {
                   <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm">
                     <span className="text-xs text-[var(--muted)]">Tingkat Lolos (≥ 75)</span>
                     <div className="text-2xl font-extrabold mt-1 text-emerald-600">
-                      {examSessions.length > 0
-                        ? `${Math.round((examSessions.filter((s) => s.total_score >= 75).length / examSessions.length) * 100)}%`
+                      {adminSessions.length > 0
+                        ? `${Math.round((adminSessions.filter((s) => s.total_score >= 75).length / adminSessions.length) * 100)}%`
                         : '0%'}
                     </div>
                     <span className="text-[11px] text-emerald-600 font-medium">Standar HR</span>
@@ -997,7 +1022,7 @@ export default function Home() {
                   <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm">
                     <span className="text-xs text-[var(--muted)]">Durasi Ujian Aktif</span>
                     <div className="text-2xl font-extrabold mt-1 text-red-500">{examSettings.duration_minutes} Menit</div>
-                    <span className="text-[11px] text-[var(--muted)]">Dapat diubah di menu Pengaturan</span>
+                    <span className="text-[11px] text-[var(--muted)]">Tersimpan di Supabase</span>
                   </div>
                 </div>
 
@@ -1020,41 +1045,55 @@ export default function Home() {
                           <th className="p-3">ID Sesi</th>
                           <th className="p-3">Nama Karyawan</th>
                           <th className="p-3">Waktu Selesai</th>
-                          <th className="p-3">Durasi</th>
+                          <th className="p-3">Pindah Tab</th>
                           <th className="p-3">Benar / Total</th>
                           <th className="p-3">Skor Akhir</th>
                           <th className="p-3">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {examSessions.map((s, idx) => (
-                          <tr key={idx} className="hover:bg-[var(--background)] transition-colors">
-                            <td className="p-3 font-mono text-[var(--muted)]">{s.id?.slice(0, 12) || 'SESS-0'}</td>
-                            <td className="p-3 font-semibold text-[var(--foreground)]">{s.participant_name}</td>
-                            <td className="p-3 text-[var(--muted)]">
-                              {new Date(s.finished_at || s.started_at).toLocaleTimeString('id-ID', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </td>
-                            <td className="p-3 font-mono">{s.time_limit_minutes}m</td>
-                            <td className="p-3 text-emerald-600 font-medium">
-                              {s.total_correct} / {questions.length}
-                            </td>
-                            <td className="p-3 font-bold text-base text-blue-600">{s.total_score}</td>
-                            <td className="p-3">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                  s.total_score >= 75
-                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-                                }`}
-                              >
-                                {s.total_score >= 75 ? 'Lulus' : 'Remedial'}
-                              </span>
+                        {adminSessions.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="p-4 text-center text-[var(--muted)]">
+                              Belum ada data pengerjaan ujian yang tersimpan.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          adminSessions.map((s, idx) => (
+                            <tr key={idx} className="hover:bg-[var(--background)] transition-colors">
+                              <td className="p-3 font-mono text-[var(--muted)]">{s.id?.slice(0, 12) || 'SESS-0'}</td>
+                              <td className="p-3 font-semibold text-[var(--foreground)]">{s.participant_name}</td>
+                              <td className="p-3 text-[var(--muted)]">
+                                {new Date(s.finished_at || s.started_at).toLocaleTimeString('id-ID', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </td>
+                              <td className="p-3 font-mono">
+                                {(s.tab_switch_count || 0) > 0 ? (
+                                  <span className="text-amber-600 font-bold">{s.tab_switch_count}x</span>
+                                ) : (
+                                  <span className="text-emerald-600">0x (Jujur)</span>
+                                )}
+                              </td>
+                              <td className="p-3 text-emerald-600 font-medium">
+                                {s.total_correct} / {questions.length}
+                              </td>
+                              <td className="p-3 font-bold text-base text-blue-600">{s.total_score}</td>
+                              <td className="p-3">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                    s.total_score >= 75
+                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                  }`}
+                                >
+                                  {s.total_score >= 75 ? 'Lulus' : 'Remedial'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1062,13 +1101,13 @@ export default function Home() {
               </div>
             )}
 
-            {/* SUBTAB 2: BANK SOAL (CRUD SOAL) */}
+            {/* SUBTAB 2: BANK SOAL (CRUD DENGAN KUNCI JAWABAN - ADMIN ONLY) */}
             {adminTab === 'questions' && (
               <div className="space-y-6">
                 <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
                   <div>
-                    <h3 className="font-bold text-sm">Daftar Bank Soal ({questions.length} Butir)</h3>
-                    <p className="text-xs text-[var(--muted)]">Ubah teks soal, ganti pilihan ganda, atau perbarui kunci jawaban.</p>
+                    <h3 className="font-bold text-sm">Daftar Bank Soal & Kunci Jawaban</h3>
+                    <p className="text-xs text-[var(--muted)]">Kelola butir soal. Kunci jawaban di sini terlindungi di server dan tidak pernah dikirim ke peserta.</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -1096,12 +1135,12 @@ export default function Home() {
                           <th className="p-3 w-36">Kategori</th>
                           <th className="p-3 w-28">Tipe Soal</th>
                           <th className="p-3">Pertanyaan</th>
-                          <th className="p-3 w-36">Kunci Jawaban</th>
+                          <th className="p-3 w-40">Kunci Jawaban</th>
                           <th className="p-3 w-28 text-center">Aksi</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)]">
-                        {questions.map((q, idx) => (
+                        {(adminQuestionsWithKeys.length > 0 ? adminQuestionsWithKeys : questions).map((q, idx) => (
                           <tr key={idx} className="hover:bg-[var(--background)] transition-colors">
                             <td className="p-3 text-center font-bold font-mono">{idx + 1}</td>
                             <td className="p-3">
@@ -1128,7 +1167,7 @@ export default function Home() {
                               </span>
                             </td>
                             <td className="p-3 max-w-xs truncate">{q.question_text}</td>
-                            <td className="p-3 font-semibold text-emerald-600">{q.correct_answer}</td>
+                            <td className="p-3 font-semibold text-emerald-600">{q.correct_answer || '(Terproteksi di Server)'}</td>
                             <td className="p-3 text-center">
                               <button
                                 onClick={() => handleOpenEditQuestion(idx)}
@@ -1281,7 +1320,58 @@ Berikan HANYA output format JSON array valid:
       </main>
 
       {/* ========================================================================= */}
-      {/* MODAL: INPUT / EDIT QUESTION                                             */}
+      {/* MODAL 1: ADMIN PIN AUTHENTICATION                                         */}
+      {/* ========================================================================= */}
+      {isAdminAuthModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-4">
+              <Lock className="w-6 h-6" />
+            </div>
+            <h3 className="font-bold text-lg mb-1">Akses Pengawas HRD</h3>
+            <p className="text-xs text-[var(--muted)] mb-4">
+              Masukkan PIN Admin untuk mengakses rekap nilai dan bank soal.
+            </p>
+
+            <form onSubmit={handleVerifyAdminPin} className="space-y-4">
+              <div>
+                <input
+                  type="password"
+                  autoFocus
+                  required
+                  maxLength={12}
+                  value={adminPinInput}
+                  onChange={(e) => setAdminPinInput(e.target.value)}
+                  placeholder="Masukkan PIN (Default: 889922)"
+                  className="w-full text-center tracking-widest text-lg font-mono p-3 rounded-xl border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                {adminAuthError && (
+                  <p className="text-xs text-red-500 font-semibold mt-1.5">{adminAuthError}</p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAdminAuthModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-[var(--border)] hover:bg-[var(--background)] text-xs font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs shadow"
+                >
+                  Buka Dashboard
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 2: INPUT / EDIT QUESTION                                            */}
       {/* ========================================================================= */}
       {isQuestionModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
@@ -1402,7 +1492,7 @@ Berikan HANYA output format JSON array valid:
               )}
 
               <div>
-                <label className="block font-semibold mb-1">Kunci Jawaban Benar</label>
+                <label className="block font-semibold mb-1">Kunci Jawaban Benar (Server Only)</label>
                 <input
                   type="text"
                   required

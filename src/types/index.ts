@@ -44,6 +44,7 @@ export interface ExamSession {
   total_score: number;
   total_correct: number;
   status: 'in_progress' | 'completed' | 'timed_out';
+  tab_switch_count?: number;
 }
 
 export interface ExamAnswer {
