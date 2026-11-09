@@ -91,7 +91,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       sessions: formatted,
-      debug: debugInfo,
+      debug: {
+        ...debugInfo,
+        rawSessionsLength: rawSessions ? rawSessions.length : 0,
+        rawSample: rawSessions && rawSessions.length > 0 ? rawSessions[0] : null,
+      },
     });
   } catch (err: any) {
     return NextResponse.json(
