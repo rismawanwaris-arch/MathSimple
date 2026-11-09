@@ -1,36 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminToken } from '@/lib/auth';
+import { requireAdmin } from '@/lib/security';
 import { supabaseServer, isServerSupabaseConfigured, supabaseUrl } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  // Check authorization
-  const token = req.cookies.get('admin_session')?.value || req.headers.get('Authorization')?.replace('Bearer ', '');
-  if (!verifyAdminToken(token)) {
-    return NextResponse.json({ error: 'Akses ditolak. Silakan login sebagai HR Admin.' }, { status: 401 });
-  }
+  const denied = requireAdmin(req);
+  if (denied) return denied;
 
   const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY);
   const hasService = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-  let keyRole = 'unknown';
-  try {
-    const rawKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
-    const parts = rawKey.split('.');
-    if (parts.length === 3) {
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-      keyRole = payload.role || 'no-role';
-    }
-  } catch {}
-
   const debugInfo = {
     isConfigured: isServerSupabaseConfigured,
     hasUrl: Boolean(supabaseUrl),
-    urlPreview: supabaseUrl || 'KOSONG',
+    urlPreview: supabaseUrl ? 'OK' : 'KOSONG',
     hasAnonKey: hasAnon,
     hasServiceRoleKey: hasService,
-    keyRole,
   };
 
   if (!isServerSupabaseConfigured || !supabaseServer) {
@@ -50,10 +36,11 @@ export async function GET(req: NextRequest) {
     // Fetch sessions directly
     const { data: rawSessions, error: sessErr } = await supabaseServer
       .from('exam_sessions')
-      .select('*');
+      .select('*')
+      .order('started_at', { ascending: false });
 
     if (sessErr) {
-      let friendlyWarning = `Error membaca tabel exam_sessions: ${sessErr.message}`;
+      let friendlyWarning = 'Gagal membaca tabel exam_sessions. Pastikan skema database sudah dijalankan dan SUPABASE_SERVICE_ROLE_KEY benar.';
       if (sessErr.message.includes('relation') && sessErr.message.includes('does not exist')) {
         friendlyWarning = 'Tabel "exam_sessions" belum dibuat di database Supabase Anda. Buka menu SQL Editor di Supabase, lalu jalankan file supabase/schema.sql.';
       }
@@ -61,9 +48,7 @@ export async function GET(req: NextRequest) {
         sessions: [],
         debug: {
           ...debugInfo,
-          error: sessErr.message,
           partCount: allParticipants ? allParticipants.length : 0,
-          partErr: partErr ? partErr.message : null,
         },
         warning: friendlyWarning,
       });
@@ -104,14 +89,13 @@ export async function GET(req: NextRequest) {
         ...debugInfo,
         rawSessionsLength: rawSessions ? rawSessions.length : 0,
         partCount: allParticipants ? allParticipants.length : 0,
-        partErr: partErr ? partErr.message : null,
       },
     });
   } catch (err: any) {
     return NextResponse.json(
       {
         sessions: [],
-        debug: { ...debugInfo, exception: err.message },
+        debug: debugInfo,
         warning: 'Gagal mengambil data dari database Supabase.',
       },
       { status: 500 }
@@ -121,10 +105,8 @@ export async function GET(req: NextRequest) {
 
 // DELETE: Hapus data sesi ujian (bisa spesifik ID atau semua data)
 export async function DELETE(req: NextRequest) {
-  const token = req.cookies.get('admin_session')?.value || req.headers.get('Authorization')?.replace('Bearer ', '');
-  if (!verifyAdminToken(token)) {
-    return NextResponse.json({ error: 'Akses ditolak. Silakan login sebagai HR Admin.' }, { status: 401 });
-  }
+  const denied = requireAdmin(req);
+  if (denied) return denied;
 
   if (!isServerSupabaseConfigured || !supabaseServer) {
     return NextResponse.json({ error: 'Supabase belum terkonfigurasi di server.' }, { status: 500 });
@@ -164,7 +146,7 @@ export async function DELETE(req: NextRequest) {
       .eq('id', sessionId);
 
     if (delErr) {
-      return NextResponse.json({ error: `Gagal menghapus sesi: ${delErr.message}` }, { status: 500 });
+      return NextResponse.json({ error: 'Gagal menghapus sesi.' }, { status: 500 });
     }
 
     // Hapus record peserta jika ada
@@ -178,7 +160,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: true, message: 'Data hasil ujian peserta berhasil dihapus.' });
   } catch (err: any) {
     console.error('Error in DELETE /api/admin/sessions:', err);
-    return NextResponse.json({ error: err.message || 'Terjadi kesalahan sistem saat menghapus data.' }, { status: 500 });
+    return NextResponse.json({ error: 'Terjadi kesalahan sistem saat menghapus data.' }, { status: 500 });
   }
 }
 

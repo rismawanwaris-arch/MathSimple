@@ -116,40 +116,16 @@ INSERT INTO questions (question_order, difficulty, category, question_type, ques
 (30, 'Sulit', 'Operasi Campuran', 'mcq', 'Penjualan Rp 8.500.000 dikurangi retur Rp 450.000 dan diskon Rp 325.000, lalu ditambah ongkir Rp 175.000. Total penerimaan bersih: (8.500.000 - 450.000 - 325.000) + 175.000 = ...', '["Rp 7.900.000", "Rp 7.850.000", "Rp 7.950.000", "Rp 8.000.000"]'::jsonb, 'Rp 7.900.000');
 
 -- =========================================================================
--- HARDENED ROW LEVEL SECURITY (RLS) POLICIES (DENGAN FALLBACK AMAN)
+-- HARDENED ROW LEVEL SECURITY (DEFAULT DENY UNTUK anon/authenticated)
+-- Akses data hanya lewat server Next.js dengan service_role (bypass RLS).
+-- Jangan menambah policy untuk anon: anon key bersifat publik di browser.
 -- =========================================================================
-
--- Aktifkan RLS pada seluruh tabel
 ALTER TABLE exam_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE participants  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE questions     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exam_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE exam_answers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE exam_answers  ENABLE ROW LEVEL SECURITY;
 
--- 1. exam_settings: Boleh dibaca oleh publik & service role
-CREATE POLICY "Public read exam_settings" ON exam_settings FOR SELECT USING (true);
-CREATE POLICY "Service role all exam_settings" ON exam_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- 2. questions: Boleh dibaca oleh publik & service role (kunci jawaban tetap disaring oleh server API)
-CREATE POLICY "Public read questions" ON questions FOR SELECT USING (true);
-CREATE POLICY "Service role all questions" ON questions FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- 3. participants: Boleh INSERT & DELETE
-CREATE POLICY "Allow insert participants" ON participants FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow select participants" ON participants FOR SELECT USING (true);
-CREATE POLICY "Allow delete participants" ON participants FOR DELETE USING (true);
-CREATE POLICY "Service role all participants" ON participants FOR ALL USING (true) WITH CHECK (true);
-
--- 4. exam_sessions: Boleh INSERT, SELECT & DELETE (dikelola HR Admin)
-CREATE POLICY "Allow insert exam_sessions" ON exam_sessions FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow select exam_sessions" ON exam_sessions FOR SELECT USING (true);
-CREATE POLICY "Allow delete exam_sessions" ON exam_sessions FOR DELETE USING (true);
-CREATE POLICY "Service role all exam_sessions" ON exam_sessions FOR ALL USING (true) WITH CHECK (true);
-
--- 5. exam_answers: Boleh INSERT, SELECT & DELETE (dikelola HR Admin)
-CREATE POLICY "Allow insert exam_answers" ON exam_answers FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow select exam_answers" ON exam_answers FOR SELECT USING (true);
-CREATE POLICY "Allow delete exam_answers" ON exam_answers FOR DELETE USING (true);
-CREATE POLICY "Service role all exam_answers" ON exam_answers FOR ALL USING (true) WITH CHECK (true);
-
-
+REVOKE ALL ON exam_settings, participants, questions, exam_sessions, exam_answers FROM anon, authenticated;
+GRANT ALL ON exam_settings, participants, questions, exam_sessions, exam_answers TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;

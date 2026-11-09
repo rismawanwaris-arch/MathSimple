@@ -28,7 +28,6 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { Question, ExamSettings, ExamSession } from '@/types';
-import { defaultQuestions } from '@/data/defaultQuestions';
 
 export default function Home() {
   // Views: 'intro' | 'exam' | 'result' | 'admin'
@@ -42,12 +41,8 @@ export default function Home() {
     warning_minutes: 2,
   });
   
-  // Strip out answers from default fallback questions immediately for client safety
-  const safeDefaultQuestions = defaultQuestions.map((q) => ({
-    ...q,
-    correct_answer: '', // sanitized
-  }));
-  const [questions, setQuestions] = useState<Question[]>(safeDefaultQuestions);
+  // Soal dimuat dari API server (tanpa kunci jawaban). Kunci TIDAK pernah ada di bundle klien.
+  const [questions, setQuestions] = useState<Question[]>([]);
 
   // Participant & Active Session State
   const [fullName, setFullName] = useState('');
@@ -173,6 +168,10 @@ export default function Home() {
   const handleStartExam = (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) return;
+    if (questions.length === 0) {
+      alert('Soal belum berhasil dimuat. Silakan muat ulang halaman.');
+      return;
+    }
 
     setUserAnswers({});
     setFlaggedQuestions([]);
@@ -1530,7 +1529,7 @@ Berikan HANYA output format JSON array valid:
                   maxLength={12}
                   value={adminPinInput}
                   onChange={(e) => setAdminPinInput(e.target.value)}
-                  placeholder="Masukkan PIN (Default: 889922)"
+                  placeholder="Masukkan PIN Admin" autoComplete="off"
                   className="w-full text-center tracking-widest text-lg font-mono p-3 rounded-xl border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
                 {adminAuthError && (

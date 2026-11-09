@@ -43,3 +43,22 @@ Dokumen ini memetakan standar keamanan untuk menjamin integritas data ujian, ker
 Meskipun sistem telah diamankan dengan prinsip di atas, sangat direkomendasikan untuk mengubah visibilitas repositori menjadi **Private**:
 - Akun Vercel gratis tetap dapat melakukan deploy otomatis dari repositori GitHub Private.
 - Tidak ada pihak luar yang dapat mempelajari struktur internal kode atau bank soal bawaan.
+
+---
+
+## Update Hardening (Audit Lanjutan)
+
+| # | Temuan | Tingkat | Perbaikan |
+|---|--------|---------|-----------|
+| 1 | Secret penanda token default tertulis di repo publik → token admin bisa dipalsukan | Kritis | Tidak ada secret/PIN default; secret diturunkan dari rahasia server; login nonaktif jika `ADMIN_PIN` kosong |
+| 2 | RLS permisif (`USING (true)`) untuk anon → siapa pun dengan anon key bisa baca kunci jawaban & hapus data via REST | Kritis | `supabase/security_hardening.sql`: hapus policy anon, REVOKE, hanya `service_role` |
+| 3 | Kunci jawaban ikut ter-bundle di JavaScript klien | Tinggi | Klien tidak lagi meng-import bank soal; soal hanya dari `/api/questions` (tanpa kunci) |
+| 4 | Brute-force PIN tanpa batas | Tinggi | Rate limit 5x/15 menit/IP |
+| 5 | Token sesi dikirim di body JSON + diterima via header | Sedang | Hanya cookie HttpOnly, SameSite=Strict, 4 jam |
+| 6 | Tanpa proteksi CSRF pada aksi admin (hapus data) | Sedang | Validasi Origin + SameSite Strict |
+| 7 | Mass-assignment di CRUD soal | Sedang | Whitelist & validasi ketat field |
+| 8 | Endpoint submit tanpa batas (spam/DoS) | Sedang | Rate limit, batas ukuran body, sanitasi jawaban |
+| 9 | Pesan error DB/internal bocor ke klien | Rendah | Pesan generik, detail hanya di log server |
+| 10 | Tanpa security headers | Rendah | CSP, HSTS, X-Frame-Options, nosniff, Referrer-Policy, dll |
+
+Wajib setelah deploy: set `ADMIN_PIN` kuat (≥ 8 karakter acak) dan `ADMIN_JWT_SECRET` di Vercel, lalu jalankan `supabase/security_hardening.sql`.

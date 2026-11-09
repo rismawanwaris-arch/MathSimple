@@ -1,46 +1,58 @@
 import crypto from 'crypto';
 
-// Default Admin PIN if not set in Environment Variables
-const DEFAULT_ADMIN_PIN = '889922';
+const SESSION_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 jam
 
-export function getAdminPin(): string {
-  return process.env.ADMIN_PIN || DEFAULT_ADMIN_PIN;
+// PIN admin WAJIB diset lewat environment variable (tidak ada default publik).
+export function getAdminPin(): string | null {
+  const pin = (process.env.ADMIN_PIN || '').trim();
+  return pin.length > 0 ? pin : null;
 }
 
-// Generate secure session token based on HMAC-SHA256
-export function generateAdminToken(): string {
-  const secret = process.env.ADMIN_JWT_SECRET || 'math-simple-secret-salt-key-2026';
-  const timestamp = Date.now().toString();
-  const signature = crypto
-    .createHmac('sha256', secret)
-    .update(`admin-session-${timestamp}`)
-    .digest('hex');
-  
-  return `${timestamp}.${signature}`;
+// Secret penandatangan token. Tidak ada nilai default yang tertulis di repo:
+// jika ADMIN_JWT_SECRET kosong, diturunkan dari rahasia server lain (PIN + service key).
+function getSigningSecret(): string | null {
+  const explicit = (process.env.ADMIN_JWT_SECRET || '').trim();
+  if (explicit.length >= 16) return explicit;
+
+  const pin = getAdminPin();
+  const svc = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  if (!pin) return null;
+  return crypto.createHash('sha256').update(`msimple|${pin}|${svc}`).digest('hex');
 }
 
-// Verify admin session token (valid for 8 hours)
+function sign(payload: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(payload).digest('hex');
+}
+
+export function generateAdminToken(): string | null {
+  const secret = getSigningSecret();
+  if (!secret) return null;
+  const expiresAt = Date.now() + SESSION_MAX_AGE_MS;
+  const nonce = crypto.randomBytes(12).toString('hex');
+  const payload = `${expiresAt}.${nonce}`;
+  return `${payload}.${sign(payload, secret)}`;
+}
+
 export function verifyAdminToken(token: string | null | undefined): boolean {
-  if (!token) return false;
-  
+  if (!token || typeof token !== 'string' || token.length > 256) return false;
+  const secret = getSigningSecret();
+  if (!secret) return false;
+
   try {
-    const [timestampStr, signature] = token.split('.');
-    if (!timestampStr || !signature) return false;
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const [expiresStr, nonce, signature] = parts;
 
-    const timestamp = parseInt(timestampStr, 10);
-    const maxAge = 8 * 60 * 60 * 1000; // 8 hours in ms
+    const expiresAt = parseInt(expiresStr, 10);
+    if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return false;
 
-    // Check expiration
-    if (Date.now() - timestamp > maxAge) return false;
-
-    const secret = process.env.ADMIN_JWT_SECRET || 'math-simple-secret-salt-key-2026';
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(`admin-session-${timestampStr}`)
-      .digest('hex');
-
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+    const expected = sign(`${expiresStr}.${nonce}`, secret);
+    const a = Buffer.from(signature);
+    const b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
+
+export const SESSION_MAX_AGE_SECONDS = SESSION_MAX_AGE_MS / 1000;

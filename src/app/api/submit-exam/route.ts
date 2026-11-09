@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabaseServer';
 import { defaultQuestions } from '@/data/defaultQuestions';
+import { getClientIp, rateLimit, tooManyRequests } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,14 +16,41 @@ function normalizeAnswer(str: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { fullName, answers, startedAt, tabSwitchCount } = body;
+    // Rate limit: maks 10 pengiriman / 10 menit per IP (kantor berbagi IP tetap aman)
+    const rl = rateLimit(`submit:${getClientIp(req)}`, 10, 10 * 60 * 1000);
+    if (!rl.ok) return tooManyRequests(rl.retryAfter);
+
+    // Batasi ukuran body (anti-DoS)
+    const rawBody = await req.text();
+    if (rawBody.length > 50_000) {
+      return NextResponse.json({ error: 'Permintaan terlalu besar.' }, { status: 413 });
+    }
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Format permintaan tidak valid.' }, { status: 400 });
+    }
+    const { fullName, startedAt } = body || {};
+    const tabSwitchCount = Math.min(Math.max(Number(body?.tabSwitchCount) || 0, 0), 1000);
+
+    // Sanitasi map jawaban: hanya key angka & value string pendek
+    const answers: Record<number, string> = {};
+    if (body?.answers && typeof body.answers === 'object' && !Array.isArray(body.answers)) {
+      for (const [k, v] of Object.entries(body.answers).slice(0, 200)) {
+        const id = Number(k);
+        if (Number.isInteger(id) && typeof v === 'string') answers[id] = v.slice(0, 300);
+      }
+    }
 
     // 1. Sanitize & Validate Participant Name
     if (!fullName || typeof fullName !== 'string' || fullName.trim().length === 0) {
       return NextResponse.json({ error: 'Nama peserta wajib diisi.' }, { status: 400 });
     }
-    const sanitizedName = fullName.trim().slice(0, 150).replace(/[<>]/g, '');
+    const sanitizedName = fullName.trim().slice(0, 100).replace(/[<>"'`\\]/g, '');
+    if (!sanitizedName) {
+      return NextResponse.json({ error: 'Nama peserta tidak valid.' }, { status: 400 });
+    }
 
     // 2. Fetch Authoritative Questions with Correct Answers on Server
     let authoritativeQuestions = defaultQuestions;
@@ -61,7 +89,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Server-Side Grading
     let correctCount = 0;
-    const userAnswersMap: Record<number, string> = answers || {};
+    const userAnswersMap: Record<number, string> = answers;
     const answerBreakdown: Array<{
       question_id: number;
       submitted_answer: string;
@@ -101,7 +129,7 @@ export async function POST(req: NextRequest) {
           .single();
 
         if (pErr) {
-          dbErrorMsg = `Gagal menyimpan peserta: ${pErr.message}`;
+          dbErrorMsg = 'Gagal menyimpan data peserta ke database.';
           console.error('Error insert participants:', pErr);
         } else if (pData) {
           // Insert exam session
@@ -113,14 +141,14 @@ export async function POST(req: NextRequest) {
               total_score: totalScore,
               total_correct: correctCount,
               status: isLate ? 'timed_out' : 'completed',
-              tab_switch_count: Number(tabSwitchCount) || 0,
+              tab_switch_count: tabSwitchCount,
               finished_at: new Date().toISOString(),
             })
             .select('id')
             .single();
 
           if (sErr) {
-            dbErrorMsg = `Gagal menyimpan sesi: ${sErr.message}`;
+            dbErrorMsg = 'Gagal menyimpan sesi ujian ke database.';
             console.error('Error insert exam_sessions:', sErr);
           } else if (sData) {
             dbSaved = true;
@@ -135,11 +163,11 @@ export async function POST(req: NextRequest) {
           }
         }
       } catch (dbErr: any) {
-        dbErrorMsg = dbErr.message;
+        dbErrorMsg = 'Terjadi kesalahan database.';
         console.error('Error inserting into Supabase:', dbErr);
       }
     } else {
-      dbErrorMsg = 'Supabase belum dikonfigurasi di Vercel (environment variables belum aktif).';
+      dbErrorMsg = 'Database belum terhubung.';
     }
 
     return NextResponse.json(
