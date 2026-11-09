@@ -50,15 +50,16 @@ Meskipun sistem telah diamankan dengan prinsip di atas, sangat direkomendasikan 
 
 | # | Temuan | Tingkat | Perbaikan |
 |---|--------|---------|-----------|
-| 1 | Secret penanda token default tertulis di repo publik → token admin bisa dipalsukan | Kritis | Tidak ada secret/PIN default; secret diturunkan dari rahasia server; login nonaktif jika `ADMIN_PIN` kosong |
+| 1 | Secret penanda token default tertulis di repo publik → token admin bisa dipalsukan | Kritis | Secret diturunkan secara kriptografis dari `SUPABASE_SERVICE_ROLE_KEY` / `ADMIN_JWT_SECRET` di server |
 | 2 | RLS permisif (`USING (true)`) untuk anon → siapa pun dengan anon key bisa baca kunci jawaban & hapus data via REST | Kritis | `supabase/security_hardening.sql`: hapus policy anon, REVOKE, hanya `service_role` |
-| 3 | Kunci jawaban ikut ter-bundle di JavaScript klien | Tinggi | Klien tidak lagi meng-import bank soal; soal hanya dari `/api/questions` (tanpa kunci) |
-| 4 | Brute-force PIN tanpa batas | Tinggi | Rate limit 5x/15 menit/IP |
-| 5 | Token sesi dikirim di body JSON + diterima via header | Sedang | Hanya cookie HttpOnly, SameSite=Strict, 4 jam |
-| 6 | Tanpa proteksi CSRF pada aksi admin (hapus data) | Sedang | Validasi Origin + SameSite Strict |
-| 7 | Mass-assignment di CRUD soal | Sedang | Whitelist & validasi ketat field |
-| 8 | Endpoint submit tanpa batas (spam/DoS) | Sedang | Rate limit, batas ukuran body, sanitasi jawaban |
-| 9 | Pesan error DB/internal bocor ke klien | Rendah | Pesan generik, detail hanya di log server |
-| 10 | Tanpa security headers | Rendah | CSP, HSTS, X-Frame-Options, nosniff, Referrer-Policy, dll |
+| 3 | Kerentanan CVE pada `next@14.2.15` & `postcss` lama | Kritis | Upgrade ke versi `next` & `postcss` terbaru yang telah di-patch (`0 vulnerabilities` pada `npm audit`) |
+| 4 | Kunci jawaban ikut ter-bundle di JavaScript klien | Tinggi | Klien tidak lagi meng-import bank soal; soal hanya dari `/api/questions` (tanpa kunci) |
+| 5 | Brute-force PIN & bypass rate-limit lintas instance serverless | Tinggi | Hybrid rate limit (in-memory + signed HttpOnly cookie `rl_admin_auth`, 5x/15 menit) + jeda anti-brute-force |
+| 6 | Manipulasi waktu mulai ujian (`startedAt` spoofing) & pengiriman ganda (replay) | Tinggi | Token waktu mulai ujian (`exam_ticket`) bertanda tangan HMAC-SHA256 dari jam server + proteksi anti-replay `nonce` |
+| 7 | Token sesi dikirim di body JSON + diterima via header | Sedang | Hanya cookie HttpOnly, SameSite=Strict, 4 jam |
+| 8 | Tanpa proteksi CSRF pada aksi admin (hapus data) | Sedang | Validasi Origin + SameSite Strict |
+| 9 | Mass-assignment di CRUD soal & parameter ID sesi tanpa validasi UUID | Sedang | Whitelist & validasi ketat field + validasi format UUID pada `DELETE /api/admin/sessions` |
+| 10 | Endpoint submit tanpa batas (spam/DoS) & risiko CSV Formula Injection | Sedang | Hybrid rate limit, batas ukuran body 50KB, sanitasi karakter formula Excel (`=`, `+`, `-`, `@`) di server & ekspor CSV |
+| 11 | Pesan error DB/internal bocor ke klien | Rendah | Pesan generik, detail hanya di log server |
+| 12 | Tanpa security headers | Rendah | CSP, HSTS, X-Frame-Options, nosniff, Referrer-Policy, dll |
 
-Wajib setelah deploy: set `ADMIN_PIN` kuat (≥ 8 karakter acak) dan `ADMIN_JWT_SECRET` di Vercel, lalu jalankan `supabase/security_hardening.sql`.

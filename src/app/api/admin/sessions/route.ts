@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/security';
+import { requireAdmin, isValidUuid } from '@/lib/security';
 import { supabaseServer, isServerSupabaseConfigured, supabaseUrl } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
@@ -128,8 +128,8 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ success: true, message: 'Seluruh data hasil ujian berhasil dihapus.' });
     }
 
-    if (!sessionId) {
-      return NextResponse.json({ error: 'ID sesi ujian harus disertakan.' }, { status: 400 });
+    if (!sessionId || !isValidUuid(sessionId)) {
+      return NextResponse.json({ error: 'ID sesi ujian tidak valid.' }, { status: 400 });
     }
 
     // Ambil participant_id untuk membersihkan data peserta juga

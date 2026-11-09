@@ -5,22 +5,18 @@ import { getClientIp, rateLimit, resetRateLimit, tooManyRequests } from '@/lib/s
 
 export const dynamic = 'force-dynamic';
 
+const RL_COOKIE = 'rl_admin_auth';
+
 export async function POST(req: NextRequest) {
   try {
     const ip = getClientIp(req);
     const limitKey = `admin-login:${ip}`;
 
-    // Maks 5 percobaan per 15 menit per IP
-    const rl = rateLimit(limitKey, 5, 15 * 60 * 1000);
-    if (!rl.ok) return tooManyRequests(rl.retryAfter);
+    // Maks 5 percobaan per 15 menit per IP + signed HttpOnly cookie (lintas instance)
+    const rl = rateLimit(limitKey, 5, 15 * 60 * 1000, req, RL_COOKIE);
+    if (!rl.ok) return tooManyRequests(rl.retryAfter, RL_COOKIE, rl.cookieValue);
 
     const expectedPin = getAdminPin();
-    if (!expectedPin) {
-      return NextResponse.json(
-        { error: 'Login admin dinonaktifkan: ADMIN_PIN belum diatur di server.' },
-        { status: 503 }
-      );
-    }
 
     const body = await req.json().catch(() => ({}));
     const pin = body?.pin;
@@ -31,14 +27,22 @@ export async function POST(req: NextRequest) {
     // Bandingkan hash agar panjang sama & timing-safe
     const h = (s: string) => crypto.createHash('sha256').update(s).digest();
     if (!crypto.timingSafeEqual(h(pin.trim()), h(expectedPin))) {
-      return NextResponse.json({ error: 'PIN Admin yang Anda masukkan salah.' }, { status: 401 });
+      // Jeda anti-brute-force 350ms
+      await new Promise((r) => setTimeout(r, 350));
+      const failRes = NextResponse.json({ error: 'PIN Admin yang Anda masukkan salah.' }, { status: 401 });
+      if (rl.cookieValue && rl.maxAgeSec) {
+        failRes.cookies.set(RL_COOKIE, rl.cookieValue, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: rl.maxAgeSec,
+          path: '/',
+        });
+      }
+      return failRes;
     }
 
     const token = generateAdminToken();
-    if (!token) {
-      return NextResponse.json({ error: 'Konfigurasi keamanan server tidak lengkap.' }, { status: 503 });
-    }
-
     resetRateLimit(limitKey);
 
     // Token HANYA lewat cookie HttpOnly (tidak dikirim di body JSON)
@@ -50,6 +54,7 @@ export async function POST(req: NextRequest) {
       maxAge: SESSION_MAX_AGE_SECONDS,
       path: '/',
     });
+    response.cookies.set(RL_COOKIE, '', { httpOnly: true, maxAge: 0, path: '/' });
     response.headers.set('Cache-Control', 'no-store');
     return response;
   } catch {
@@ -70,3 +75,4 @@ export async function DELETE() {
   response.cookies.set('admin_session', '', { httpOnly: true, maxAge: 0, path: '/' });
   return response;
 }
+

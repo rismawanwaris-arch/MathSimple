@@ -52,6 +52,7 @@ export default function Home() {
   const [timeLeft, setTimeLeft] = useState(examSettings.duration_minutes * 60);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [examStartTime, setExamStartTime] = useState<string>('');
+  const [examToken, setExamToken] = useState<string>('');
   const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
   const [submissionReference, setSubmissionReference] = useState('');
   const [submissionSavedToDb, setSubmissionSavedToDb] = useState<boolean | null>(null);
@@ -106,8 +107,20 @@ export default function Home() {
           if (data.questions && data.questions.length > 0) {
             setQuestions(data.questions);
           }
+          if (data.settings) {
+            const dur = data.settings.duration_minutes || 15;
+            setExamSettings({
+              duration_minutes: dur,
+              autosubmit: data.settings.autosubmit ?? true,
+              warning_minutes: data.settings.warning_minutes || 2,
+            });
+            setTimeLeft(dur * 60);
+          }
+          if (data.examToken) {
+            setExamToken(data.examToken);
+          }
         }
-      } catch (err) {
+      } catch {
         console.warn('Menggunakan fallback data lokal yang telah disanitasi.');
       }
     }
@@ -165,7 +178,7 @@ export default function Home() {
   };
 
   // Start Exam
-  const handleStartExam = (e: React.FormEvent) => {
+  const handleStartExam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) return;
     if (questions.length === 0) {
@@ -182,6 +195,18 @@ export default function Home() {
     setTimeLeft(examSettings.duration_minutes * 60);
     setIsTimerRunning(true);
     setActiveView('exam');
+
+    // Minta tiket waktu mulai resmi yang ditandatangani jam server
+    try {
+      const startRes = await fetch('/api/questions', { method: 'POST', cache: 'no-store' });
+      if (startRes.ok) {
+        const startData = await startRes.json();
+        if (startData.examToken) setExamToken(startData.examToken);
+        if (startData.startedAt) setExamStartTime(startData.startedAt);
+      }
+    } catch {
+      // Gunakan token awal dari saat halaman dimuat
+    }
   };
 
   // Select MCQ Answer
@@ -234,6 +259,7 @@ export default function Home() {
           fullName,
           answers: userAnswers,
           startedAt: examStartTime || new Date().toISOString(),
+          examToken,
           tabSwitchCount,
         }),
       });
@@ -250,7 +276,7 @@ export default function Home() {
         setSubmissionSavedToDb(false);
         setSubmissionDbWarning(result.error || 'Gagal menyimpan ke database');
       }
-    } catch (err: any) {
+    } catch {
       setSubmissionReference(`SUBMIT-OFFLINE-${Math.floor(1000 + Math.random() * 9000)}`);
       setSubmissionSavedToDb(false);
       setSubmissionDbWarning('Koneksi jaringan terputus saat pengiriman');
@@ -272,15 +298,27 @@ export default function Home() {
   };
 
   // Admin PIN Authentication Handlers
-  const handleOpenAdmin = () => {
+  const handleOpenAdmin = async () => {
     if (isAdminAuthenticated) {
       setActiveView('admin');
       loadAdminDashboardData();
-    } else {
-      setAdminAuthError('');
-      setAdminPinInput('');
-      setIsAdminAuthModalOpen(true);
+      return;
     }
+    // Cek apakah cookie sesi admin masih aktif
+    try {
+      const checkRes = await fetch('/api/admin/auth', { method: 'GET', cache: 'no-store' });
+      if (checkRes.ok) {
+        setIsAdminAuthenticated(true);
+        setActiveView('admin');
+        loadAdminDashboardData();
+        return;
+      }
+    } catch {
+      // Lanjut ke modal PIN
+    }
+    setAdminAuthError('');
+    setAdminPinInput('');
+    setIsAdminAuthModalOpen(true);
   };
 
   const handleVerifyAdminPin = async (e: React.FormEvent) => {
@@ -568,28 +606,36 @@ export default function Home() {
     }
   };
 
-  // Export CSV (Admin only)
+  // Export CSV (Admin only) - dilengkapi sanitasi anti-CSV Formula Injection
   const handleExportCSV = () => {
+    const safeCsv = (val: unknown): string => {
+      let s = String(val ?? '').replace(/[\r\n]+/g, ' ').trim();
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+
     const headers = ['ID Sesi', 'Nama Karyawan', 'Waktu Mulai', 'Durasi Setting', 'Benar', 'Total Soal', 'Skor Akhir', 'Perpindahan Tab'];
     const rows = adminSessions.map((s) => [
-      s.id,
-      `"${s.participant_name}"`,
-      new Date(s.started_at).toLocaleString('id-ID'),
-      `${s.time_limit_minutes} Menit`,
-      s.total_correct,
-      questions.length,
-      s.total_score,
-      s.tab_switch_count || 0,
+      safeCsv(s.id),
+      safeCsv(s.participant_name),
+      safeCsv(new Date(s.started_at).toLocaleString('id-ID')),
+      safeCsv(`${s.time_limit_minutes} Menit`),
+      safeCsv(s.total_correct),
+      safeCsv(questions.length || 30),
+      safeCsv(s.total_score),
+      safeCsv(s.tab_switch_count || 0),
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvString = '\uFEFF' + [headers.map(safeCsv).join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', `rekap_nilai_matematika_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Current Question

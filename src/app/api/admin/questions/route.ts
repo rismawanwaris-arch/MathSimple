@@ -117,8 +117,7 @@ export async function PUT(req: NextRequest) {
     if (!clean) return NextResponse.json({ error: 'Data soal tidak valid atau ID kosong.' }, { status: 400 });
 
     if (isServerSupabaseConfigured && supabaseServer) {
-      const { id, ...fields } = clean;
-      const { error } = await supabaseServer.from('questions').update(fields).eq('id', id);
+      const { error } = await supabaseServer.from('questions').upsert(clean);
       if (error) throw error;
     }
     return NextResponse.json({ success: true, question: clean });
