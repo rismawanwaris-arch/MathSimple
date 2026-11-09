@@ -4,13 +4,12 @@ import { defaultQuestions } from '@/data/defaultQuestions';
 
 export const dynamic = 'force-dynamic';
 
-// Helper to normalize answers for comparison
 function normalizeAnswer(str: string): string {
   return str
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
-    .replace(/^rp\s*/i, 'rp ') // standardise Rp prefix
+    .replace(/^rp\s*/i, 'rp ')
     .trim();
 }
 
@@ -30,24 +29,26 @@ export async function POST(req: NextRequest) {
     let allowedDurationMinutes = 15;
 
     if (isServerSupabaseConfigured && supabaseServer) {
-      // Fetch Settings
-      const { data: sData } = await supabaseServer
-        .from('exam_settings')
-        .select('duration_minutes')
-        .eq('id', 1)
-        .single();
-      if (sData?.duration_minutes) {
-        allowedDurationMinutes = sData.duration_minutes;
-      }
+      try {
+        const { data: sData } = await supabaseServer
+          .from('exam_settings')
+          .select('duration_minutes')
+          .eq('id', 1)
+          .single();
+        if (sData?.duration_minutes) {
+          allowedDurationMinutes = sData.duration_minutes;
+        }
 
-      // Fetch Questions
-      const { data: qData, error } = await supabaseServer
-        .from('questions')
-        .select('*')
-        .order('question_order', { ascending: true });
+        const { data: qData, error: qErr } = await supabaseServer
+          .from('questions')
+          .select('*')
+          .order('question_order', { ascending: true });
 
-      if (!error && qData && qData.length > 0) {
-        authoritativeQuestions = qData;
+        if (!qErr && qData && qData.length > 0) {
+          authoritativeQuestions = qData;
+        }
+      } catch (e) {
+        console.warn('Gagal membaca bank soal dari Supabase, menggunakan default lokal:', e);
       }
     }
 
@@ -55,8 +56,6 @@ export async function POST(req: NextRequest) {
     const startTimeMs = new Date(startedAt || Date.now()).getTime();
     const nowMs = Date.now();
     const elapsedSeconds = Math.max(0, Math.floor((nowMs - startTimeMs) / 1000));
-    
-    // Allowed threshold: configured minutes + 2 minutes network latency grace period
     const maxAllowedSeconds = (allowedDurationMinutes * 60) + 120;
     const isLate = elapsedSeconds > maxAllowedSeconds;
 
@@ -88,6 +87,9 @@ export async function POST(req: NextRequest) {
     const totalScore = Number(((correctCount / totalQuestions) * 100).toFixed(1));
     const referenceCode = `SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
 
+    let dbSaved = false;
+    let dbErrorMsg: string | null = null;
+
     // 5. Save Securely to Supabase
     if (isServerSupabaseConfigured && supabaseServer) {
       try {
@@ -98,7 +100,10 @@ export async function POST(req: NextRequest) {
           .select('id')
           .single();
 
-        if (!pErr && pData) {
+        if (pErr) {
+          dbErrorMsg = `Gagal menyimpan peserta: ${pErr.message}`;
+          console.error('Error insert participants:', pErr);
+        } else if (pData) {
           // Insert exam session
           const { data: sData, error: sErr } = await supabaseServer
             .from('exam_sessions')
@@ -114,7 +119,11 @@ export async function POST(req: NextRequest) {
             .select('id')
             .single();
 
-          if (!sErr && sData) {
+          if (sErr) {
+            dbErrorMsg = `Gagal menyimpan sesi: ${sErr.message}`;
+            console.error('Error insert exam_sessions:', sErr);
+          } else if (sData) {
+            dbSaved = true;
             // Insert answer details
             const answerRows = answerBreakdown.map((a) => ({
               session_id: sData.id,
@@ -125,12 +134,14 @@ export async function POST(req: NextRequest) {
             await supabaseServer.from('exam_answers').insert(answerRows);
           }
         }
-      } catch (dbErr) {
+      } catch (dbErr: any) {
+        dbErrorMsg = dbErr.message;
         console.error('Error inserting into Supabase:', dbErr);
       }
+    } else {
+      dbErrorMsg = 'Supabase belum dikonfigurasi di Vercel (environment variables belum aktif).';
     }
 
-    // 6. Return response to participant (WITHOUT REVEALING SCORE OR KEYS)
     return NextResponse.json(
       {
         success: true,
@@ -138,7 +149,9 @@ export async function POST(req: NextRequest) {
         participantName: sanitizedName,
         submittedAt: new Date().toISOString(),
         durationMinutes: allowedDurationMinutes,
-        message: 'Jawaban ujian telah berhasil diserahkan dan tersimpan aman di server HR.',
+        savedToSupabase: dbSaved,
+        dbWarning: dbErrorMsg,
+        message: 'Jawaban ujian telah berhasil diserahkan.',
       },
       {
         headers: {

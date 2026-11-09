@@ -59,6 +59,8 @@ export default function Home() {
   const [examStartTime, setExamStartTime] = useState<string>('');
   const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
   const [submissionReference, setSubmissionReference] = useState('');
+  const [submissionSavedToDb, setSubmissionSavedToDb] = useState<boolean | null>(null);
+  const [submissionDbWarning, setSubmissionDbWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Admin Authentication & Session State
@@ -68,6 +70,17 @@ export default function Home() {
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
   const [adminSessions, setAdminSessions] = useState<ExamSession[]>([]);
   const [adminQuestionsWithKeys, setAdminQuestionsWithKeys] = useState<Question[]>([]);
+  const [adminDebugInfo, setAdminDebugInfo] = useState<{
+    isConfigured?: boolean;
+    hasUrl?: boolean;
+    urlPreview?: string;
+    hasAnonKey?: boolean;
+    hasServiceRoleKey?: boolean;
+    error?: string;
+    exception?: string;
+  } | null>(null);
+  const [adminWarning, setAdminWarning] = useState<string | null>(null);
+  const [isLoadingAdminData, setIsLoadingAdminData] = useState(false);
 
   // Question CRUD Modal State
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -230,12 +243,18 @@ export default function Home() {
 
       if (response.ok && result.success) {
         setSubmissionReference(result.referenceCode);
+        setSubmissionSavedToDb(result.savedToSupabase ?? false);
+        setSubmissionDbWarning(result.dbWarning || null);
       } else {
         // Fallback reference code
         setSubmissionReference(`SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
+        setSubmissionSavedToDb(false);
+        setSubmissionDbWarning(result.error || 'Gagal menyimpan ke database');
       }
-    } catch (err) {
+    } catch (err: any) {
       setSubmissionReference(`SUBMIT-OFFLINE-${Math.floor(1000 + Math.random() * 9000)}`);
+      setSubmissionSavedToDb(false);
+      setSubmissionDbWarning('Koneksi jaringan terputus saat pengiriman');
     }
 
     setIsSubmitting(false);
@@ -298,23 +317,29 @@ export default function Home() {
 
   // Load Admin Data (Sessions, Full Questions with Keys, Settings)
   const loadAdminDashboardData = async () => {
+    setIsLoadingAdminData(true);
     try {
       // 1. Load Sessions
-      const sessRes = await fetch('/api/admin/sessions');
+      const sessRes = await fetch('/api/admin/sessions', { cache: 'no-store' });
       if (sessRes.ok) {
         const sData = await sessRes.json();
         setAdminSessions(sData.sessions || []);
+        setAdminDebugInfo(sData.debug || null);
+        setAdminWarning(sData.warning || null);
+      } else {
+        const errData = await sessRes.json().catch(() => ({}));
+        setAdminWarning(errData.error || 'Gagal memuat sesi ujian dari server.');
       }
 
       // 2. Load Full Questions (Admin only)
-      const qRes = await fetch('/api/admin/questions');
+      const qRes = await fetch('/api/admin/questions', { cache: 'no-store' });
       if (qRes.ok) {
         const qData = await qRes.json();
         setAdminQuestionsWithKeys(qData.questions || []);
       }
 
       // 3. Load Settings
-      const setRes = await fetch('/api/admin/settings');
+      const setRes = await fetch('/api/admin/settings', { cache: 'no-store' });
       if (setRes.ok) {
         const setData = await setRes.json();
         if (setData.settings) {
@@ -326,8 +351,11 @@ export default function Home() {
           setTimeLeft((setData.settings.duration_minutes || 15) * 60);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error loading admin dashboard data:', err);
+      setAdminWarning(err.message || 'Gagal terhubung ke server.');
+    } finally {
+      setIsLoadingAdminData(false);
     }
   };
 
@@ -897,12 +925,30 @@ export default function Home() {
                 <span className="text-[var(--muted)]">Batas Waktu Ujian</span>
                 <span className="font-semibold">{examSettings.duration_minutes} Menit</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-[var(--muted)]">Status Penilaian</span>
-                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
-                  Tersimpan di Supabase
-                </span>
+                {submissionSavedToDb === true ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Supabase
+                  </span>
+                ) : submissionSavedToDb === false ? (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold text-xs flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Server-Graded (Database Belum Terhubung)
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
+                    Tersimpan di Server
+                  </span>
+                )}
               </div>
+              {submissionDbWarning && (
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 space-y-0.5">
+                  <span className="font-semibold flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Info Database:
+                  </span>
+                  <p>{submissionDbWarning}</p>
+                </div>
+              )}
             </div>
 
             <div className="p-3.5 mb-6 rounded-xl bg-gray-500/10 border border-gray-500/20 text-xs text-[var(--muted)]">
@@ -994,6 +1040,72 @@ export default function Home() {
             {/* SUBTAB 1: REKAP SKOR */}
             {adminTab === 'scores' && (
               <div className="space-y-6">
+                {/* Supabase Connection Diagnostics Card */}
+                {adminWarning ? (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2 font-bold text-sm text-amber-800 dark:text-amber-300">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                          <span>Status Database Supabase Perlu Dikonfigurasi</span>
+                        </div>
+                        <p className="text-xs text-amber-700 dark:text-amber-300">
+                          {adminWarning}
+                        </p>
+                        {adminDebugInfo && (
+                          <div className="mt-2 pt-2 border-t border-amber-500/20 text-[11px] grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <span className="text-[var(--muted)]">NEXT_PUBLIC_SUPABASE_URL: </span>
+                              <strong className={adminDebugInfo.hasUrl ? 'text-emerald-600' : 'text-red-500'}>
+                                {adminDebugInfo.hasUrl ? `Terdeteksi (${adminDebugInfo.urlPreview})` : 'Belum Terisi di Vercel'}
+                              </strong>
+                            </div>
+                            <div>
+                              <span className="text-[var(--muted)]">SUPABASE_SERVICE_ROLE_KEY: </span>
+                              <strong className={adminDebugInfo.hasServiceRoleKey ? 'text-emerald-600' : 'text-red-500'}>
+                                {adminDebugInfo.hasServiceRoleKey ? 'Terpasang' : (adminDebugInfo.hasAnonKey ? 'Menggunakan Anon Key' : 'Belum Terisi')}
+                              </strong>
+                            </div>
+                          </div>
+                        )}
+                        <div className="mt-2.5 text-xs bg-[var(--card)] p-3 rounded-xl border border-[var(--border)] text-[var(--foreground)] space-y-1">
+                          <strong className="block text-[11px] font-semibold text-blue-600">Langkah Penyelesaian:</strong>
+                          <ol className="list-decimal list-inside text-[11px] space-y-1 text-[var(--muted)]">
+                            <li>Jika sudah mengisi Environment Variables di Vercel: Buka menu <strong>Deployments</strong> di Vercel → klik titik tiga (<code>...</code>) di kanan atas deployment terbaru → klik <strong>Redeploy</strong>.</li>
+                            <li>Buka Supabase Console → menu <strong>SQL Editor</strong> → buka / tempel isi file <code>supabase/schema.sql</code> → klik tombol <strong>Run</strong> untuk membuat tabel database.</li>
+                          </ol>
+                        </div>
+                      </div>
+                      <button
+                        onClick={loadAdminDashboardData}
+                        disabled={isLoadingAdminData}
+                        className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-all flex-shrink-0 shadow cursor-pointer disabled:opacity-50"
+                      >
+                        <RotateCcw className={`w-3.5 h-3.5 ${isLoadingAdminData ? 'animate-spin' : ''}`} />
+                        <span>Cek Ulang</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-300 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span className="font-semibold">Koneksi Database Supabase Terhubung Aktif</span>
+                      {adminDebugInfo?.urlPreview && (
+                        <span className="text-[11px] text-[var(--muted)]">({adminDebugInfo.urlPreview})</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={loadAdminDashboardData}
+                      disabled={isLoadingAdminData}
+                      className="px-2.5 py-1 rounded-lg border border-emerald-500/30 hover:bg-emerald-500/20 font-medium flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      <RotateCcw className={`w-3 h-3 ${isLoadingAdminData ? 'animate-spin' : ''}`} />
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Metric Summary */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm">
