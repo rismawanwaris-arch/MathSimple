@@ -49,14 +49,15 @@ flowchart TD
 ### 5. Kebutuhan Fungsional (Feature Requirements)
 
 #### A. Modul Karyawan (Peserta Ujian)
-1. **Identitas Peserta**: Input NIK, Nama Lengkap, dan Divisi tanpa proses pendaftaran akun yang rumit.
+1. **Identitas Peserta Sederhana**: Cukup mengisi **Nama Lengkap** saja sebelum memulai tes (tanpa perlu mengisi NIK, divisi, atau pendaftaran akun berbelit-belit).
 2. **Antarmuka Ujian Responsif**:
-   - Floating timer hitung mundur 15 menit.
+   - Floating timer hitung mundur (default 15 menit atau sesuai konfigurasi HR).
    - Indikator status nomor soal 1 - 30 (Kosong, Terjawab, Ragu-ragu).
    - Mode isian cerdas untuk nominal rupiah (placeholder contoh format).
 3. **Pencegahan Kehilangan Data**: Auto-save jawaban per butir soal ke state/local storage.
 4. **Auto-Submit On Timeout**: Otomatis menutup ujian dan menyimpan nilai saat waktu habis.
 5. **Halaman Tanda Terima**: Karyawan menerima bukti pengerjaan resmi tanpa memperlihatkan rincian nilai.
+
 
 #### B. Modul Admin / HR (Dasbor Supabase)
 1. **Daftar Hasil & Leaderboard**: Tabel nilai lengkap dengan filter divisi dan tanggal.
@@ -79,12 +80,10 @@ flowchart TD
 ### 6. Desain Database Supabase (Database Schema)
 
 ```sql
--- 1. Tabel Karyawan
-CREATE TABLE employees (
+-- 1. Tabel Peserta / Karyawan (Hanya Nama Lengkap)
+CREATE TABLE participants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nik VARCHAR(50) UNIQUE NOT NULL,
     full_name VARCHAR(150) NOT NULL,
-    department VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -105,7 +104,7 @@ CREATE TABLE questions (
 -- 3. Sesi Ujian (Exam Sessions)
 CREATE TABLE exam_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
+    participant_id UUID REFERENCES participants(id) ON DELETE CASCADE,
     started_at TIMESTAMPTZ DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
     time_limit_minutes INT DEFAULT 15,
