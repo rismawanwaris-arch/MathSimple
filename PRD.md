@@ -62,7 +62,17 @@ flowchart TD
 1. **Daftar Hasil & Leaderboard**: Tabel nilai lengkap dengan filter divisi dan tanggal.
 2. **Pembedaan Akurasi**: Rincian persentase benar pada soal hitungan (MCQ) vs ketelitian penulisan nominal (Isian Singkat).
 3. **Analisis Soal Sulit**: Mengetahui nomor soal yang paling banyak gagal dijawab karyawan.
-4. **Ekspor Nilai**: Kemampuan download laporan evaluasi ke CSV/Excel.
+4. **Manajemen Bank Soal (CRUD Soal)**:
+   - Form Tambah & Edit Soal: Atur nomor urut (1-30), kategori, tingkat kesulitan, tipe jawaban (Pilihan Ganda / Isian Singkat), teks soal, opsi A/B/C/D, dan kunci jawaban.
+   - Fitur Ganti Soal Cepat: Ubah satu butir soal secara spesifik tanpa mengganggu soal lainnya.
+   - Import JSON Massal: Unggah paket 30 soal sekaligus dari output AI Generator.
+5. **Menu Pengaturan Waktu Ujian (Timer Settings)**:
+   - Pengaturan dinamis durasi ujian (default 15 menit, dapat disesuaikan menjadi 10, 20, 30 menit, dll.).
+   - Pengaturan ambang peringatan waktu (misal: warna kuning saat < 3 menit, merah saat < 1 menit).
+6. **Prompt Generator AI Terintegrasi**:
+   - Menu khusus di dasbor HR yang menyediakan template prompt siap salin untuk ChatGPT/Gemini/Claude guna menghasilkan 30 soal baru secara instan.
+7. **Ekspor Nilai**: Kemampuan download laporan evaluasi ke CSV/Excel.
+
 
 ---
 
