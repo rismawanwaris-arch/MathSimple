@@ -179,13 +179,29 @@ export async function POST(req: NextRequest) {
             console.error('Error insert exam_sessions:', sErr);
           } else if (sData) {
             dbSaved = true;
+
+            // Pastikan bank soal di database sudah terisi agar foreign key exam_answers(question_id) terpenuhi
+            try {
+              const { count: qCount } = await supabaseServer
+                .from('questions')
+                .select('id', { count: 'exact', head: true });
+              if (!qCount || qCount === 0) {
+                await supabaseServer.from('questions').upsert(defaultQuestions);
+              }
+            } catch {
+              // Abaikan jika tabel questions sudah ada
+            }
+
             const answerRows = answerBreakdown.map((a) => ({
               session_id: sData.id,
               question_id: a.question_id,
               submitted_answer: a.submitted_answer,
               is_correct: a.is_correct,
             }));
-            await supabaseServer.from('exam_answers').insert(answerRows);
+            const { error: ansErr } = await supabaseServer.from('exam_answers').insert(answerRows);
+            if (ansErr) {
+              console.error('Error insert exam_answers:', ansErr);
+            }
           }
         }
       } catch (dbErr: any) {
@@ -195,6 +211,34 @@ export async function POST(req: NextRequest) {
     } else {
       dbErrorMsg = 'Database belum terhubung.';
     }
+
+    // Bangun rincian evaluasi lengkap agar peserta / penguji bisa langsung melihat mana yang salah
+    const richAnswers = authoritativeQuestions.map((q) => {
+      const submitted = (userAnswersMap[q.id] || '').trim();
+      const normSubmitted = normalizeAnswer(submitted);
+      const normCorrect = normalizeAnswer(q.correct_answer);
+      const isCorrect = normSubmitted !== '' && normSubmitted === normCorrect;
+      return {
+        question_id: q.id,
+        question_order: q.question_order,
+        category: q.category,
+        difficulty: q.difficulty,
+        question_type: q.question_type,
+        question_text: q.question_text,
+        options: q.options || null,
+        submitted_answer: submitted,
+        correct_answer: q.correct_answer,
+        is_correct: isCorrect,
+      };
+    });
+
+    const categoryStats: Record<string, { total: number; correct: number; incorrect: number }> = {};
+    richAnswers.forEach((a) => {
+      if (!categoryStats[a.category]) categoryStats[a.category] = { total: 0, correct: 0, incorrect: 0 };
+      categoryStats[a.category].total++;
+      if (a.is_correct) categoryStats[a.category].correct++;
+      else categoryStats[a.category].incorrect++;
+    });
 
     const res = NextResponse.json(
       {
@@ -206,6 +250,14 @@ export async function POST(req: NextRequest) {
         savedToSupabase: dbSaved,
         dbWarning: dbErrorMsg,
         message: 'Jawaban ujian telah berhasil diserahkan.',
+        evaluation: {
+          score: totalScore,
+          totalQuestions,
+          totalCorrect: correctCount,
+          totalIncorrect: totalQuestions - correctCount,
+          category_stats: categoryStats,
+          answers: richAnswers,
+        },
       },
       {
         headers: {

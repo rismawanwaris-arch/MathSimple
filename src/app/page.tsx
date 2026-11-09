@@ -26,8 +26,13 @@ import {
   Lock,
   LogOut,
   EyeOff,
+  Eye,
+  XCircle,
+  BarChart3,
+  FileText,
+  X,
 } from 'lucide-react';
-import { Question, ExamSettings, ExamSession } from '@/types';
+import { Question, ExamSettings, ExamSession, ExamAnswerDetail, ExamEvaluationSummary } from '@/types';
 
 export default function Home() {
   // Views: 'intro' | 'exam' | 'result' | 'admin'
@@ -39,6 +44,7 @@ export default function Home() {
     duration_minutes: 15,
     autosubmit: true,
     warning_minutes: 2,
+    show_evaluation_to_participant: true,
   });
   
   // Soal dimuat dari API server (tanpa kunci jawaban). Kunci TIDAK pernah ada di bundle klien.
@@ -59,6 +65,17 @@ export default function Home() {
   const [submissionDbWarning, setSubmissionDbWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Participant Result Evaluation State
+  const [submissionEvaluation, setSubmissionEvaluation] = useState<{
+    score: number;
+    totalQuestions: number;
+    totalCorrect: number;
+    totalIncorrect: number;
+    category_stats?: Record<string, { total: number; correct: number; incorrect: number }>;
+    answers: ExamAnswerDetail[];
+  } | null>(null);
+  const [participantEvaluationFilter, setParticipantEvaluationFilter] = useState<'wrong' | 'all' | 'correct'>('wrong');
+
   // Admin Authentication & Session State
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
@@ -77,6 +94,16 @@ export default function Home() {
   } | null>(null);
   const [adminWarning, setAdminWarning] = useState<string | null>(null);
   const [isLoadingAdminData, setIsLoadingAdminData] = useState(false);
+
+  // Admin Session Detail Evaluation Modal State
+  const [isAdminDetailModalOpen, setIsAdminDetailModalOpen] = useState(false);
+  const [isLoadingAdminDetail, setIsLoadingAdminDetail] = useState(false);
+  const [selectedAdminSessionDetail, setSelectedAdminSessionDetail] = useState<{
+    session: ExamSession;
+    answers: ExamAnswerDetail[];
+    summary: ExamEvaluationSummary;
+  } | null>(null);
+  const [adminDetailFilter, setAdminDetailFilter] = useState<'wrong' | 'all' | 'correct'>('wrong');
 
   // Question CRUD Modal State
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -190,6 +217,7 @@ export default function Home() {
     setFlaggedQuestions([]);
     setCurrentQIndex(0);
     setTabSwitchCount(0);
+    setSubmissionEvaluation(null);
     const startIso = new Date().toISOString();
     setExamStartTime(startIso);
     setTimeLeft(examSettings.duration_minutes * 60);
@@ -270,6 +298,10 @@ export default function Home() {
         setSubmissionReference(result.referenceCode);
         setSubmissionSavedToDb(result.savedToSupabase ?? false);
         setSubmissionDbWarning(result.dbWarning || null);
+        if (result.evaluation) {
+          setSubmissionEvaluation(result.evaluation);
+          setParticipantEvaluationFilter(result.evaluation.totalIncorrect > 0 ? 'wrong' : 'all');
+        }
       } else {
         // Fallback reference code
         setSubmissionReference(`SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
@@ -550,6 +582,39 @@ export default function Home() {
     navigator.clipboard.writeText(text);
     setCopiedTemplate(templateKey);
     setTimeout(() => setCopiedTemplate(null), 2500);
+  };
+
+  // View evaluation & question breakdown for a specific session (Admin only)
+  const handleViewSessionDetail = async (sessionId?: string) => {
+    if (!sessionId) {
+      alert('ID sesi tidak valid.');
+      return;
+    }
+    setIsLoadingAdminDetail(true);
+    setIsAdminDetailModalOpen(true);
+    setSelectedAdminSessionDetail(null);
+    setAdminDetailFilter('wrong');
+
+    try {
+      const res = await fetch(`/api/admin/sessions?id=${sessionId}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSelectedAdminSessionDetail(data);
+        if (data.summary && data.summary.total_incorrect > 0) {
+          setAdminDetailFilter('wrong');
+        } else {
+          setAdminDetailFilter('all');
+        }
+      } else {
+        alert(data.error || 'Gagal memuat evaluasi sesi ujian.');
+        setIsAdminDetailModalOpen(false);
+      }
+    } catch {
+      alert('Terjadi kesalahan saat menghubungi server.');
+      setIsAdminDetailModalOpen(false);
+    } finally {
+      setIsLoadingAdminDetail(false);
+    }
   };
 
   // Delete a specific session
@@ -1001,76 +1066,284 @@ export default function Home() {
         {/* VIEW 3: CONFIRMATION / RECEIPT (ZERO LEAKAGE)                           */}
         {/* ========================================================================= */}
         {activeView === 'result' && (
-          <section className="max-w-xl mx-auto bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm text-center">
-            <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-3xl mb-4">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-            <h2 className="text-2xl font-bold">Ujian Selesai & Berhasil Dikirim!</h2>
-            <p className="text-sm text-[var(--muted)] mt-2">
-              Terima kasih telah menyelesaikan seluruh rangkaian tes ketelitian matematika. Jawaban Anda telah tersimpan dan dievaluasi dengan aman di server HR.
-            </p>
+          <section className="max-w-3xl mx-auto space-y-6">
+            {/* 1. Header & Confirmation Card */}
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm text-center">
+              <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-3xl mb-4">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-bold">Ujian Selesai & Berhasil Dikirim!</h2>
+              <p className="text-sm text-[var(--muted)] mt-2">
+                Terima kasih telah menyelesaikan seluruh rangkaian tes ketelitian matematika.
+              </p>
 
-            {/* Receipt Card */}
-            <div className="my-6 p-5 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-left text-xs space-y-3">
-              <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
-                <span className="text-[var(--muted)]">Nomor Bukti Pengiriman</span>
-                <span className="font-mono font-bold text-blue-600">{submissionReference}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--muted)]">Nama Lengkap Peserta</span>
-                <span className="font-semibold text-blue-600">{fullName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--muted)]">Batas Waktu Ujian</span>
-                <span className="font-semibold">{examSettings.duration_minutes} Menit</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[var(--muted)]">Status Penilaian</span>
-                {submissionSavedToDb === true ? (
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Supabase
-                  </span>
-                ) : submissionSavedToDb === false ? (
-                  <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold text-xs flex items-center gap-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Server-Graded (Database Belum Terhubung)
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
-                    Tersimpan di Server
-                  </span>
+              {/* Receipt Card */}
+              <div className="my-6 p-5 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-left text-xs space-y-3">
+                <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
+                  <span className="text-[var(--muted)]">Nomor Bukti Pengiriman</span>
+                  <span className="font-mono font-bold text-blue-600">{submissionReference}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted)]">Nama Lengkap Peserta</span>
+                  <span className="font-semibold text-blue-600">{fullName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted)]">Batas Waktu Ujian</span>
+                  <span className="font-semibold">{examSettings.duration_minutes} Menit</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--muted)]">Status Database</span>
+                  {submissionSavedToDb === true ? (
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Supabase
+                    </span>
+                  ) : submissionSavedToDb === false ? (
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold text-xs flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5" /> Tersimpan di Server
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
+                      Tersimpan di Server
+                    </span>
+                  )}
+                </div>
+                {submissionDbWarning && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 space-y-0.5">
+                    <span className="font-semibold flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Info Database:
+                    </span>
+                    <p>{submissionDbWarning}</p>
+                  </div>
                 )}
               </div>
-              {submissionDbWarning && (
-                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 space-y-0.5">
-                  <span className="font-semibold flex items-center gap-1">
-                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Info Database:
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap gap-3 justify-center">
+                <button
+                  onClick={() => {
+                    setFullName('');
+                    setActiveView('intro');
+                  }}
+                  className="py-2.5 px-5 border border-[var(--border)] hover:bg-[var(--background)] text-xs rounded-xl font-medium transition-all"
+                >
+                  Kembali ke Halaman Depan
+                </button>
+                <button
+                  onClick={handleOpenAdmin}
+                  className="py-2.5 px-5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5"
+                >
+                  <Lock className="w-3.5 h-3.5" /> Akses HR Admin
+                </button>
+              </div>
+            </div>
+
+            {/* 2. HASIL EVALUASI & PEMBAHASAN SOAL (LIHAT SOAL MANA YANG SALAH) */}
+            {submissionEvaluation && (
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+                  <div>
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-blue-600" />
+                      Evaluasi & Pembahasan Butir Soal
+                    </h3>
+                    <p className="text-xs text-[var(--muted)] mt-1">
+                      Pelajari soal mana saja yang salah dijawab untuk evaluasi dan perbaikan ketelitian Anda.
+                    </p>
+                  </div>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      submissionEvaluation.score >= 75
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                    }`}
+                  >
+                    Skor Akhir: {submissionEvaluation.score} / 100 ({submissionEvaluation.score >= 75 ? 'Lulus' : 'Remedial'})
                   </span>
-                  <p>{submissionDbWarning}</p>
                 </div>
-              )}
-            </div>
 
-            <div className="p-3.5 mb-6 rounded-xl bg-gray-500/10 border border-gray-500/20 text-xs text-[var(--muted)]">
-              <strong>Catatan:</strong> Nilai akhir dan analisis evaluasi tes bersifat rahasia perusahaan dan hanya dapat diakses oleh tim HRD.
-            </div>
+                {/* Score Tiles */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-center">
+                    <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">Total Nilai</span>
+                    <p className="text-2xl font-extrabold text-blue-600 mt-1">{submissionEvaluation.score}</p>
+                    <span className="text-[10px] text-[var(--muted)]">Skala 0 - 100</span>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 text-center">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Jawaban Benar
+                    </span>
+                    <p className="text-2xl font-extrabold text-emerald-600 mt-1">
+                      {submissionEvaluation.totalCorrect} <span className="text-xs font-normal text-[var(--muted)]">/ {submissionEvaluation.totalQuestions}</span>
+                    </p>
+                    <span className="text-[10px] text-[var(--muted)]">Tingkat Akurasi {Math.round((submissionEvaluation.totalCorrect / submissionEvaluation.totalQuestions) * 100)}%</span>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 text-center">
+                    <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 flex items-center justify-center gap-1">
+                      <XCircle className="w-3.5 h-3.5" /> Jawaban Salah
+                    </span>
+                    <p className="text-2xl font-extrabold text-red-600 mt-1">
+                      {submissionEvaluation.totalIncorrect} <span className="text-xs font-normal text-[var(--muted)]">Soal</span>
+                    </p>
+                    <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">⚠️ Perlu Evaluasi</span>
+                  </div>
+                </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setFullName('');
-                  setActiveView('intro');
-                }}
-                className="flex-1 py-2.5 px-4 border border-[var(--border)] hover:bg-[var(--background)] text-xs rounded-xl font-medium transition-all"
-              >
-                Kembali ke Halaman Depan
-              </button>
-              <button
-                onClick={handleOpenAdmin}
-                className="py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5"
-              >
-                <Lock className="w-3.5 h-3.5" /> Akses HR Admin
-              </button>
-            </div>
+                {/* Filter Tabs */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                  <span className="text-xs font-semibold text-[var(--muted)]">Tampilkan Butir Soal:</span>
+                  <div className="inline-flex rounded-xl p-1 bg-[var(--background)] border border-[var(--border)] text-xs">
+                    <button
+                      onClick={() => setParticipantEvaluationFilter('wrong')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                        participantEvaluationFilter === 'wrong'
+                          ? 'bg-red-600 text-white shadow-xs'
+                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Hanya Yang Salah ({submissionEvaluation.totalIncorrect})</span>
+                    </button>
+                    <button
+                      onClick={() => setParticipantEvaluationFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                        participantEvaluationFilter === 'all'
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      <span>Semua Soal ({submissionEvaluation.totalQuestions})</span>
+                    </button>
+                    <button
+                      onClick={() => setParticipantEvaluationFilter('correct')}
+                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                        participantEvaluationFilter === 'correct'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Yang Benar ({submissionEvaluation.totalCorrect})</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* List of Evaluated Questions */}
+                <div className="space-y-4 pt-2">
+                  {(() => {
+                    const filtered = submissionEvaluation.answers.filter((q) => {
+                      if (participantEvaluationFilter === 'wrong') return !q.is_correct;
+                      if (participantEvaluationFilter === 'correct') return q.is_correct;
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="p-8 text-center rounded-2xl bg-[var(--background)] border border-[var(--border)] text-xs text-[var(--muted)]">
+                          {participantEvaluationFilter === 'wrong' ? (
+                            <div className="space-y-1">
+                              <p className="text-base font-bold text-emerald-600">🎉 Luar Biasa!</p>
+                              <p>Tidak ada jawaban yang salah. Seluruh soal berhasil dijawab dengan tepat.</p>
+                            </div>
+                          ) : (
+                            <p>Tidak ada butir soal dalam filter ini.</p>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((q) => (
+                      <div
+                        key={q.question_id}
+                        className={`p-4 md:p-5 rounded-2xl border transition-all text-left ${
+                          q.is_correct
+                            ? 'bg-emerald-500/5 border-emerald-500/25 dark:border-emerald-500/20'
+                            : 'bg-red-500/5 border-red-500/30 dark:border-red-500/20'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold bg-[var(--background)] border border-[var(--border)]">
+                              No. {q.question_order}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                              {q.category}
+                            </span>
+                            <span className="text-[11px] text-[var(--muted)]">{q.difficulty}</span>
+                          </div>
+                          {q.is_correct ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1 border border-emerald-300 dark:border-emerald-800">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Jawaban Benar
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 flex items-center gap-1 border border-red-300 dark:border-red-800">
+                              <XCircle className="w-3.5 h-3.5" /> Jawaban Salah (Perlu Evaluasi)
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Question Text */}
+                        <p className="text-sm font-semibold text-[var(--foreground)] mb-3 leading-relaxed">
+                          {q.question_text}
+                        </p>
+
+                        {/* Options if MCQ */}
+                        {q.options && q.options.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mb-3 text-xs">
+                            {q.options.map((opt, oIdx) => {
+                              const isThisSubmitted = q.submitted_answer?.trim() === opt.trim();
+                              const isThisCorrect = q.correct_answer?.trim() === opt.trim();
+                              return (
+                                <div
+                                  key={oIdx}
+                                  className={`p-2 rounded-xl border text-[11px] flex items-center justify-between ${
+                                    isThisCorrect
+                                      ? 'bg-emerald-100/70 border-emerald-400 font-bold text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-200'
+                                      : isThisSubmitted
+                                      ? 'bg-red-100/70 border-red-400 font-semibold text-red-900 dark:bg-red-950/70 dark:text-red-200'
+                                      : 'bg-[var(--background)] border-[var(--border)] text-[var(--muted)]'
+                                  }`}
+                                >
+                                  <span>{String.fromCharCode(65 + oIdx)}. {opt}</span>
+                                  {isThisCorrect && <span className="text-[10px] text-emerald-700 font-bold">✓ Kunci</span>}
+                                  {isThisSubmitted && !isThisCorrect && <span className="text-[10px] text-red-600 font-bold">✗ Pilihan Anda</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Submitted vs Correct Comparison Boxes */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                          <div
+                            className={`p-2.5 rounded-xl border ${
+                              q.is_correct
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-200'
+                                : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800/60 text-red-800 dark:text-red-200'
+                            }`}
+                          >
+                            <span className="text-[10px] font-semibold uppercase tracking-wider block opacity-75">
+                              Jawaban Anda:
+                            </span>
+                            <span className="font-bold text-sm block mt-0.5">
+                              {q.submitted_answer ? q.submitted_answer : <em className="text-red-500 font-normal">(Tidak Dijawab)</em>}
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 rounded-xl border bg-emerald-100/80 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider block text-emerald-700 dark:text-emerald-300">
+                              Kunci Jawaban Resmi:
+                            </span>
+                            <span className="font-bold text-sm block mt-0.5 text-emerald-800 dark:text-emerald-200">
+                              {q.correct_answer}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -1315,14 +1588,24 @@ export default function Home() {
                                 </span>
                               </td>
                               <td className="p-3 text-right">
-                                <button
-                                  onClick={() => handleDeleteSession(s.id, s.participant_name)}
-                                  className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-all cursor-pointer inline-flex items-center gap-1 font-medium text-xs"
-                                  title={`Hapus data ${s.participant_name}`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span className="hidden sm:inline">Hapus</span>
-                                </button>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleViewSessionDetail(s.id)}
+                                    className="px-2.5 py-1 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 rounded-lg transition-all cursor-pointer inline-flex items-center gap-1 font-semibold text-xs border border-blue-200 dark:border-blue-800/60"
+                                    title={`Lihat butir soal mana saja yang salah untuk ${s.participant_name}`}
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    <span>Evaluasi</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteSession(s.id, s.participant_name)}
+                                    className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-all cursor-pointer inline-flex items-center gap-1 font-medium text-xs"
+                                    title={`Hapus data ${s.participant_name}`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Hapus</span>
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))
@@ -1755,6 +2038,308 @@ Berikan HANYA output format JSON array valid:
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 3: EVALUASI JAWABAN KARYAWAN (DETAIL SOAL SALAH & KUNCI JAWABAN)     */}
+      {/* ========================================================================= */}
+      {isAdminDetailModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-xs">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-6 border-b border-[var(--border)] flex items-center justify-between gap-3 bg-[var(--background)]">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-lg text-[var(--foreground)]">
+                    Evaluasi Jawaban: {selectedAdminSessionDetail?.session?.participant_name || 'Karyawan'}
+                  </h3>
+                  {selectedAdminSessionDetail && (
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                        selectedAdminSessionDetail.session.total_score >= 75
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                      }`}
+                    >
+                      {selectedAdminSessionDetail.session.total_score >= 75 ? 'Lulus' : 'Remedial'}
+                    </span>
+                  )}
+                </div>
+                {selectedAdminSessionDetail && (
+                  <p className="text-xs text-[var(--muted)] mt-1">
+                    Waktu Ujian: {new Date(selectedAdminSessionDetail.session.started_at).toLocaleString('id-ID')} • Durasi: {selectedAdminSessionDetail.session.time_limit_minutes} Menit • Pindah Tab: {selectedAdminSessionDetail.session.tab_switch_count || 0}x
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setIsAdminDetailModalOpen(false)}
+                className="p-2 rounded-xl border border-[var(--border)] hover:bg-[var(--card)] transition-all cursor-pointer"
+                title="Tutup Modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1">
+              {isLoadingAdminDetail ? (
+                <div className="p-12 text-center text-xs text-[var(--muted)] space-y-2">
+                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                  <p className="font-semibold text-sm">Memuat rekaman butir soal & jawaban...</p>
+                  <p>Menganalisis jawaban yang salah dan perlu dievaluasi.</p>
+                </div>
+              ) : selectedAdminSessionDetail ? (
+                <>
+                  {/* KPI Summary Tiles */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-center">
+                      <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">Skor Akhir</span>
+                      <p className="text-2xl font-extrabold text-blue-600 mt-0.5">
+                        {selectedAdminSessionDetail.summary.score}
+                      </p>
+                      <span className="text-[10px] text-[var(--muted)]">Skala 0 - 100</span>
+                    </div>
+                    <div className="p-3.5 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 text-center">
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Jawaban Benar
+                      </span>
+                      <p className="text-2xl font-extrabold text-emerald-600 mt-0.5">
+                        {selectedAdminSessionDetail.summary.total_correct}{' '}
+                        <span className="text-xs font-normal text-[var(--muted)]">
+                          / {selectedAdminSessionDetail.summary.total_questions}
+                        </span>
+                      </p>
+                      <span className="text-[10px] text-[var(--muted)]">
+                        Akurasi {Math.round((selectedAdminSessionDetail.summary.total_correct / selectedAdminSessionDetail.summary.total_questions) * 100)}%
+                      </span>
+                    </div>
+                    <div className="p-3.5 rounded-2xl bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 text-center">
+                      <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 flex items-center justify-center gap-1">
+                        <XCircle className="w-3.5 h-3.5" /> Jawaban Salah
+                      </span>
+                      <p className="text-2xl font-extrabold text-red-600 mt-0.5">
+                        {selectedAdminSessionDetail.summary.total_incorrect}{' '}
+                        <span className="text-xs font-normal text-[var(--muted)]">Soal</span>
+                      </p>
+                      <span className="text-[10px] text-red-600 dark:text-red-400 font-semibold">
+                        ⚠️ Wajib Dievaluasi
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Category Breakdown (Analisis Kelemahan per Materi) */}
+                  {selectedAdminSessionDetail.summary.category_stats && (
+                    <div className="p-4 rounded-2xl bg-[var(--background)] border border-[var(--border)]">
+                      <h4 className="text-xs font-bold text-[var(--foreground)] mb-3 flex items-center gap-1.5">
+                        <BarChart3 className="w-4 h-4 text-purple-600" />
+                        Analisis Penguasaan Materi Matematika Karyawan
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {Object.entries(selectedAdminSessionDetail.summary.category_stats).map(([cat, stat]) => {
+                          const pct = stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0;
+                          return (
+                            <div key={cat} className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] text-xs">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="font-semibold truncate">{cat}</span>
+                                <span className={`font-bold ${pct >= 70 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {pct}%
+                                </span>
+                              </div>
+                              <div className="w-full bg-[var(--border)] h-1.5 rounded-full overflow-hidden mb-1.5">
+                                <div
+                                  className={`h-full rounded-full ${pct >= 70 ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[10px] text-[var(--muted)]">
+                                <span>Benar: {stat.correct}/{stat.total}</span>
+                                {stat.incorrect > 0 ? (
+                                  <span className="text-red-500 font-semibold">{stat.incorrect} salah</span>
+                                ) : (
+                                  <span className="text-emerald-500 font-semibold">Sempurna</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filter Tabs */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <span className="text-xs font-semibold text-[var(--muted)]">Pilihan Tampilan Soal:</span>
+                    <div className="inline-flex rounded-xl p-1 bg-[var(--background)] border border-[var(--border)] text-xs">
+                      <button
+                        onClick={() => setAdminDetailFilter('wrong')}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                          adminDetailFilter === 'wrong'
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                        }`}
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>Hanya Yang Salah ({selectedAdminSessionDetail.summary.total_incorrect})</span>
+                      </button>
+                      <button
+                        onClick={() => setAdminDetailFilter('all')}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                          adminDetailFilter === 'all'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                        }`}
+                      >
+                        <span>Semua Soal ({selectedAdminSessionDetail.summary.total_questions})</span>
+                      </button>
+                      <button
+                        onClick={() => setAdminDetailFilter('correct')}
+                        className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                          adminDetailFilter === 'correct'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Yang Benar ({selectedAdminSessionDetail.summary.total_correct})</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Questions List */}
+                  <div className="space-y-3.5">
+                    {(() => {
+                      const filtered = selectedAdminSessionDetail.answers.filter((q) => {
+                        if (adminDetailFilter === 'wrong') return !q.is_correct;
+                        if (adminDetailFilter === 'correct') return q.is_correct;
+                        return true;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="p-8 text-center rounded-2xl bg-[var(--background)] border border-[var(--border)] text-xs text-[var(--muted)]">
+                            {adminDetailFilter === 'wrong' ? (
+                              <div className="space-y-1">
+                                <p className="text-base font-bold text-emerald-600">🎉 Sempurna!</p>
+                                <p>Karyawan tidak memiliki jawaban yang salah pada ujian ini.</p>
+                              </div>
+                            ) : (
+                              <p>Tidak ada butir soal dalam filter ini.</p>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      return filtered.map((q) => (
+                        <div
+                          key={q.question_id}
+                          className={`p-4 rounded-2xl border transition-all text-left ${
+                            q.is_correct
+                              ? 'bg-emerald-500/5 border-emerald-500/25 dark:border-emerald-500/20'
+                              : 'bg-red-500/5 border-red-500/30 dark:border-red-500/20'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold bg-[var(--background)] border border-[var(--border)]">
+                                No. {q.question_order}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                                {q.category}
+                              </span>
+                              <span className="text-[11px] text-[var(--muted)]">{q.difficulty}</span>
+                            </div>
+                            {q.is_correct ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1 border border-emerald-300 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Benar
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 flex items-center gap-1 border border-red-300 dark:border-red-800">
+                                <XCircle className="w-3.5 h-3.5" /> SALAH (Perlu Evaluasi)
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-sm font-semibold text-[var(--foreground)] mb-3 leading-relaxed">
+                            {q.question_text}
+                          </p>
+
+                          {/* Options if MCQ */}
+                          {q.options && q.options.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mb-3 text-xs">
+                              {q.options.map((opt, oIdx) => {
+                                const isThisSubmitted = q.submitted_answer?.trim() === opt.trim();
+                                const isThisCorrect = q.correct_answer?.trim() === opt.trim();
+                                return (
+                                  <div
+                                    key={oIdx}
+                                    className={`p-2 rounded-xl border text-[11px] flex items-center justify-between ${
+                                      isThisCorrect
+                                        ? 'bg-emerald-100/70 border-emerald-400 font-bold text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-200'
+                                        : isThisSubmitted
+                                        ? 'bg-red-100/70 border-red-400 font-semibold text-red-900 dark:bg-red-950/70 dark:text-red-200'
+                                        : 'bg-[var(--background)] border-[var(--border)] text-[var(--muted)]'
+                                    }`}
+                                  >
+                                    <span>{String.fromCharCode(65 + oIdx)}. {opt}</span>
+                                    {isThisCorrect && <span className="text-[10px] text-emerald-700 font-bold">✓ Kunci</span>}
+                                    {isThisSubmitted && !isThisCorrect && <span className="text-[10px] text-red-600 font-bold">✗ Pilihan Karyawan</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Comparison Boxes */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                            <div
+                              className={`p-2.5 rounded-xl border ${
+                                q.is_correct
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-200'
+                                  : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800/60 text-red-800 dark:text-red-200'
+                              }`}
+                            >
+                              <span className="text-[10px] font-semibold uppercase tracking-wider block opacity-75">
+                                Jawaban Karyawan:
+                              </span>
+                              <span className="font-bold text-sm block mt-0.5">
+                                {q.submitted_answer ? q.submitted_answer : <em className="text-red-500 font-normal">(Tidak Dijawab)</em>}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-xl border bg-emerald-100/80 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider block text-emerald-700 dark:text-emerald-300">
+                                Kunci Jawaban Resmi:
+                              </span>
+                              <span className="font-bold text-sm block mt-0.5 text-emerald-800 dark:text-emerald-200">
+                                {q.correct_answer}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 sm:p-4 border-t border-[var(--border)] bg-[var(--background)] flex justify-between items-center text-xs">
+              <span className="text-[var(--muted)]">
+                {selectedAdminSessionDetail?.summary
+                  ? `Total: ${selectedAdminSessionDetail.summary.total_questions} Soal (${selectedAdminSessionDetail.summary.total_correct} Benar, ${selectedAdminSessionDetail.summary.total_incorrect} Salah)`
+                  : ''}
+              </span>
+              <button
+                onClick={() => setIsAdminDetailModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-all cursor-pointer shadow-xs"
+              >
+                Tutup Evaluasi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

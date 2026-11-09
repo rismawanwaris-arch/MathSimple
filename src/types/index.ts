@@ -32,6 +32,7 @@ export interface ExamSettings {
   duration_minutes: number;
   autosubmit: boolean;
   warning_minutes: number;
+  show_evaluation_to_participant?: boolean;
 }
 
 export interface ExamSession {
@@ -54,3 +55,26 @@ export interface ExamAnswer {
   submitted_answer: string;
   is_correct: boolean;
 }
+
+export interface ExamAnswerDetail {
+  question_id: number;
+  question_order: number;
+  category: Category;
+  difficulty: Difficulty;
+  question_type: QuestionType;
+  question_text: string;
+  options?: string[] | null;
+  submitted_answer: string;
+  correct_answer: string;
+  is_correct: boolean;
+}
+
+export interface ExamEvaluationSummary {
+  score: number;
+  total_questions: number;
+  total_correct: number;
+  total_incorrect: number;
+  category_stats?: Record<string, { total: number; correct: number; incorrect: number }>;
+  difficulty_stats?: Record<string, { total: number; correct: number; incorrect: number }>;
+}
+
