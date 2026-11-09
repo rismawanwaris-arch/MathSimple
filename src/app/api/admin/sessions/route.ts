@@ -14,12 +14,23 @@ export async function GET(req: NextRequest) {
   const hasAnon = Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY);
   const hasService = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
+  let keyRole = 'unknown';
+  try {
+    const rawKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
+    const parts = rawKey.split('.');
+    if (parts.length === 3) {
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+      keyRole = payload.role || 'no-role';
+    }
+  } catch {}
+
   const debugInfo = {
     isConfigured: isServerSupabaseConfigured,
     hasUrl: Boolean(supabaseUrl),
     urlPreview: supabaseUrl || 'KOSONG',
     hasAnonKey: hasAnon,
     hasServiceRoleKey: hasService,
+    keyRole,
   };
 
   if (!isServerSupabaseConfigured || !supabaseServer) {
