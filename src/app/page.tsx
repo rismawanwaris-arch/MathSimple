@@ -127,29 +127,12 @@ export default function Home() {
 
   // 1. Fetch Sanitized Questions & Public Settings from Secure API on Mount
   useEffect(() => {
-    // Cek apakah perangkat/browser ini sudah pernah mengirimkan ujian sebelumnya
+    // Bersihkan residu penguncian lama agar perangkat selalu siap untuk ujian baru
     try {
-      const stored = localStorage.getItem('math_simple_submitted');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && parsed.referenceCode) {
-          setHasSubmittedExam(true);
-          setFullName(parsed.fullName || '');
-          setSubmissionReference(parsed.referenceCode);
-          setSubmissionSavedToDb(parsed.savedToSupabase ?? true);
-          if (typeof parsed.score === 'number') {
-            setFinalScore(parsed.score);
-          } else if (parsed.evaluation && typeof parsed.evaluation.score === 'number') {
-            setFinalScore(parsed.evaluation.score);
-          }
-          if (parsed.totalQuestions) {
-            setFinalTotalQuestions(parsed.totalQuestions);
-          }
-          setActiveView('result');
-        }
-      }
+      localStorage.removeItem('math_simple_submitted');
+      document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
     } catch {
-      // Abaikan jika parsing gagal
+      // Abaikan jika storage dinonaktifkan
     }
 
     async function loadPublicData() {
@@ -974,73 +957,29 @@ export default function Home() {
               </button>
             </div>
 
-            {/* LOCKED NOTICE IF EXAM ALREADY SUBMITTED */}
-            {hasSubmittedExam && (
-              <div className="mb-6 p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 text-amber-950 dark:text-amber-200 space-y-3">
-                <div className="flex items-center gap-2 font-bold text-sm text-amber-800 dark:text-amber-300">
-                  <Lock className="w-4 h-4 text-amber-600" />
-                  Ujian Telah Selesai Dikirimkan & Terkunci
-                </div>
-                <p className="text-xs leading-relaxed">
-                  Peserta atas nama <strong>{fullName || 'Anda'}</strong> telah menyelesaikan ujian dan mengirimkan jawaban (Nomor Bukti: <code className="bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 rounded font-mono font-bold text-blue-700 dark:text-blue-300">{submissionReference || 'TERCATAT'}</code>).
-                </p>
-                <p className="text-xs text-[var(--muted)]">
-                  Untuk menjaga integritas dan keaslian penilaian, lembar ujian tidak dapat diakses atau dikerjakan kembali.
-                </p>
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveView('result')}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <BarChart3 className="w-4 h-4" /> Buka Hasil Ujian & Bukti
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* FORM HANYA NAMA */}
+            {/* FORM NAMA PESERTA */}
             <form onSubmit={handleStartExam} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold mb-1.5">Nama Lengkap Peserta</label>
                 <input
                   type="text"
                   required
-                  disabled={hasSubmittedExam}
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Ketikkan nama lengkap Anda..."
-                  className={`w-full px-4 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] text-base font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
-                    hasSubmittedExam ? 'opacity-60 cursor-not-allowed bg-gray-100 dark:bg-gray-800/40' : ''
-                  }`}
+                  className="w-full px-4 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] text-base font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 />
                 <p className="text-[11px] text-[var(--muted)] mt-1.5">
-                  {hasSubmittedExam
-                    ? 'Akses pendaftaran ditutup karena Anda telah menyelesaikan ujian.'
-                    : 'Cukup masukkan nama Anda untuk memulai ujian.'}
+                  Cukup masukkan nama Anda untuk memulai ujian.
                 </p>
               </div>
 
               <button
                 type="submit"
-                disabled={hasSubmittedExam}
-                className={`w-full py-3.5 px-4 font-semibold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2 ${
-                  hasSubmittedExam
-                    ? 'bg-gray-400 dark:bg-gray-700 cursor-not-allowed text-white opacity-70'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                }`}
+                className="w-full py-3.5 px-4 font-semibold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
               >
-                {hasSubmittedExam ? (
-                  <>
-                    <Lock className="w-4 h-4" />
-                    Ujian Sudah Selesai Dikirim (Akses Ditutup)
-                  </>
-                ) : (
-                  <>
-                    Mulai Ujian Sekarang ({examSettings.duration_minutes} Menit)
-                    <ChevronRight className="w-4 h-4" />
-                  </>
-                )}
+                Mulai Ujian Sekarang ({examSettings.duration_minutes} Menit)
+                <ChevronRight className="w-4 h-4" />
               </button>
             </form>
           </section>
