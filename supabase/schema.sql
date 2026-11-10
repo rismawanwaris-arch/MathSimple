@@ -6,19 +6,20 @@
 -- 1. Enable UUID Extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. Drop existing tables if re-running (Clean setup)
-DROP TABLE IF EXISTS exam_answers CASCADE;
-DROP TABLE IF EXISTS exam_sessions CASCADE;
-DROP TABLE IF EXISTS questions CASCADE;
-DROP TABLE IF EXISTS participants CASCADE;
-DROP TABLE IF EXISTS exam_settings CASCADE;
+-- 2. Drop existing tables (HANYA AKTIFKAN JIKA INGIN MERESET TOTAL DARI NOL)
+-- PERHATIAN: Baris di bawah dinonaktifkan agar tidak menghapus riwayat peserta dan sesi ujian yang sudah ada!
+-- DROP TABLE IF EXISTS exam_answers CASCADE;
+-- DROP TABLE IF EXISTS exam_sessions CASCADE;
+-- DROP TABLE IF EXISTS questions CASCADE;
+-- DROP TABLE IF EXISTS participants CASCADE;
+-- DROP TABLE IF EXISTS exam_settings CASCADE;
 
 -- =========================================================================
--- TABLE DEFINITIONS
+-- TABLE DEFINITIONS (NON-DESTRUCTIVE / PRESERVES HISTORICAL DATA)
 -- =========================================================================
 
 -- 1. Settings Tabel (Durasi Waktu Ujian Global)
-CREATE TABLE exam_settings (
+CREATE TABLE IF NOT EXISTS exam_settings (
     id SERIAL PRIMARY KEY,
     duration_minutes INT DEFAULT 15,
     autosubmit BOOLEAN DEFAULT TRUE,
@@ -31,16 +32,16 @@ VALUES (1, 15, TRUE, 2)
 ON CONFLICT (id) DO NOTHING;
 
 -- 2. Peserta Ujian (Hanya Nama Lengkap)
-CREATE TABLE participants (
+CREATE TABLE IF NOT EXISTS participants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name VARCHAR(150) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 3. Bank Soal (30 Butir Soal Bergradasi)
-CREATE TABLE questions (
+CREATE TABLE IF NOT EXISTS questions (
     id SERIAL PRIMARY KEY,
-    question_order INT NOT NULL,
+    question_order INT UNIQUE NOT NULL,
     category VARCHAR(50) NOT NULL,      -- 'Pertambahan', 'Pengurangan', 'Penulisan Nominal', 'Penyebutan Nominal', 'Operasi Campuran'
     difficulty VARCHAR(20) NOT NULL,    -- 'Mudah', 'Menengah', 'Sulit'
     question_type VARCHAR(20) NOT NULL, -- 'mcq' (Pilihan Ganda) atau 'input' (Isian Singkat)
@@ -51,8 +52,11 @@ CREATE TABLE questions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Pastikan indeks unik question_order ada jika tabel sudah terlanjur dibuat tanpa UNIQUE
+CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_order ON questions (question_order);
+
 -- 4. Sesi Ujian (Exam Sessions - Immutable)
-CREATE TABLE exam_sessions (
+CREATE TABLE IF NOT EXISTS exam_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     participant_id UUID REFERENCES participants(id) ON DELETE CASCADE,
     started_at TIMESTAMPTZ DEFAULT NOW(),
@@ -65,7 +69,7 @@ CREATE TABLE exam_sessions (
 );
 
 -- 5. Jawaban Peserta per Soal (Immutable)
-CREATE TABLE exam_answers (
+CREATE TABLE IF NOT EXISTS exam_answers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID REFERENCES exam_sessions(id) ON DELETE CASCADE,
     question_id INT REFERENCES questions(id) ON DELETE CASCADE,
@@ -113,7 +117,14 @@ INSERT INTO questions (question_order, difficulty, category, question_type, ques
 (27, 'Sulit', 'Operasi Campuran', 'mcq', 'Pelanggan tarik tunai Rp 22.000.000 via Transfer (tarif Rp 20.000.001 - Rp 50.000.000 admin Rp 25.000) dan membeli 2 voucher data masing-masing Rp 65.000. Pelanggan mentransfer total sebesar Rp 22.155.000. Apakah nominal transfer tersebut sudah tepat?', '["Tepat, Rp 22.155.000", "Kurang Rp 10.000", "Lebih Rp 10.000", "Kurang Rp 25.000"]'::jsonb, 'Tepat, Rp 22.155.000'),
 (28, 'Sulit', 'Operasi Campuran', 'mcq', 'Pelanggan ingin tarik tunai Rp 2.500.000. Karena limit QRIS di konter maksimal Rp 2.000.000, kasir menyarankan via Transfer ke BCA A/N ASYA BISNIS INDONESIA. Berapa biaya admin via Transfer untuk nominal Rp 2.500.000 sesuai tabel?', '["Rp 5.000", "Rp 10.000", "Rp 15.000", "Rp 20.000"]'::jsonb, 'Rp 5.000'),
 (29, 'Sulit', 'Operasi Campuran', 'mcq', 'Pada rekap malam jam 21:30 (tutup transfer), kasir merekap tarik tunai via QRIS: 3x Rp 200.000 (admin Rp 3.000), 2x Rp 500.000 (admin Rp 5.000), dan 2x Rp 1.000.000 (admin Rp 10.000). Berapa total uang tunai yang keluar dan total admin yang diperoleh?', '["Tarik Tunai Rp 3.600.000, Total Admin Rp 39.000", "Tarik Tunai Rp 3.600.000, Total Admin Rp 35.000", "Tarik Tunai Rp 3.500.000, Total Admin Rp 39.000", "Tarik Tunai Rp 3.700.000, Total Admin Rp 45.000"]'::jsonb, 'Tarik Tunai Rp 3.600.000, Total Admin Rp 39.000'),
-(30, 'Sulit', 'Operasi Campuran', 'mcq', 'Kasir menerima komplain: Pelanggan tarik tunai via Transfer Rp 6.000.000 dan dikenakan admin Rp 10.000. Pelanggan merasa seharusnya adminnya Rp 5.000. Berdasarkan tabel tarif resmi konter, bagaimana keputusannya?', '["Benar, karena Rp 6.000.000 masuk rentang Rp 5.000.001 - Rp 10.000.000 (Admin Rp 10.000)", "Salah, seharusnya Rp 5.000", "Salah, seharusnya Rp 15.000", "Salah, seharusnya Rp 20.000"]'::jsonb, 'Benar, karena Rp 6.000.000 masuk rentang Rp 5.000.001 - Rp 10.000.000 (Admin Rp 10.000)');
+(30, 'Sulit', 'Operasi Campuran', 'mcq', 'Kasir menerima komplain: Pelanggan tarik tunai via Transfer Rp 6.000.000 dan dikenakan admin Rp 10.000. Pelanggan merasa seharusnya adminnya Rp 5.000. Berdasarkan tabel tarif resmi konter, bagaimana keputusannya?', '["Benar, karena Rp 6.000.000 masuk rentang Rp 5.000.001 - Rp 10.000.000 (Admin Rp 10.000)", "Salah, seharusnya Rp 5.000", "Salah, seharusnya Rp 15.000", "Salah, seharusnya Rp 20.000"]'::jsonb, 'Benar, karena Rp 6.000.000 masuk rentang Rp 5.000.001 - Rp 10.000.000 (Admin Rp 10.000)')
+ON CONFLICT (question_order) DO UPDATE SET
+    difficulty = EXCLUDED.difficulty,
+    category = EXCLUDED.category,
+    question_type = EXCLUDED.question_type,
+    question_text = EXCLUDED.question_text,
+    options = EXCLUDED.options,
+    correct_answer = EXCLUDED.correct_answer;
 
 -- =========================================================================
 -- HARDENED ROW LEVEL SECURITY (DEFAULT DENY UNTUK anon/authenticated)
