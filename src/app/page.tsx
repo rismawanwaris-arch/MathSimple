@@ -70,16 +70,9 @@ export default function Home() {
   const [hasSubmittedExam, setHasSubmittedExam] = useState(false);
   const [lockedReason, setLockedReason] = useState<string | null>(null);
 
-  // Participant Result Evaluation State
-  const [submissionEvaluation, setSubmissionEvaluation] = useState<{
-    score: number;
-    totalQuestions: number;
-    totalCorrect: number;
-    totalIncorrect: number;
-    category_stats?: Record<string, { total: number; correct: number; incorrect: number }>;
-    answers: ExamAnswerDetail[];
-  } | null>(null);
-  const [participantEvaluationFilter, setParticipantEvaluationFilter] = useState<'wrong' | 'all' | 'correct'>('wrong');
+  // Participant Result State (Hanya Nilai & Ucapan Terima Kasih - Tanpa Pembahasan Kunci Jawaban)
+  const [finalScore, setFinalScore] = useState<number | null>(null);
+  const [finalTotalQuestions, setFinalTotalQuestions] = useState<number>(30);
 
   // Admin Authentication & Session State
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -144,9 +137,13 @@ export default function Home() {
           setFullName(parsed.fullName || '');
           setSubmissionReference(parsed.referenceCode);
           setSubmissionSavedToDb(parsed.savedToSupabase ?? true);
-          if (parsed.evaluation) {
-            setSubmissionEvaluation(parsed.evaluation);
-            setParticipantEvaluationFilter(parsed.evaluation.totalIncorrect > 0 ? 'wrong' : 'all');
+          if (typeof parsed.score === 'number') {
+            setFinalScore(parsed.score);
+          } else if (parsed.evaluation && typeof parsed.evaluation.score === 'number') {
+            setFinalScore(parsed.evaluation.score);
+          }
+          if (parsed.totalQuestions) {
+            setFinalTotalQuestions(parsed.totalQuestions);
           }
           setActiveView('result');
         }
@@ -282,7 +279,7 @@ export default function Home() {
     setFlaggedQuestions([]);
     setCurrentQIndex(0);
     setTabSwitchCount(0);
-    setSubmissionEvaluation(null);
+    setFinalScore(null);
     const startIso = new Date().toISOString();
     setExamStartTime(startIso);
     setTimeLeft(examSettings.duration_minutes * 60);
@@ -351,9 +348,10 @@ export default function Home() {
         setSubmissionReference(result.referenceCode);
         setSubmissionSavedToDb(result.savedToSupabase ?? false);
         setSubmissionDbWarning(result.dbWarning || null);
-        if (result.evaluation) {
-          setSubmissionEvaluation(result.evaluation);
-          setParticipantEvaluationFilter(result.evaluation.totalIncorrect > 0 ? 'wrong' : 'all');
+        const scoreVal = typeof result.score === 'number' ? result.score : (result.evaluation?.score ?? 0);
+        setFinalScore(scoreVal);
+        if (result.totalQuestions) {
+          setFinalTotalQuestions(result.totalQuestions);
         }
 
         // KUNCI UJIAN PERMANEN: cegah akses ulang pada perangkat ini
@@ -362,7 +360,8 @@ export default function Home() {
           fullName,
           referenceCode: result.referenceCode,
           submittedAt: result.submittedAt || new Date().toISOString(),
-          evaluation: result.evaluation || null,
+          score: scoreVal,
+          totalQuestions: result.totalQuestions || 30,
           savedToSupabase: result.savedToSupabase ?? false,
         };
         try {
@@ -743,7 +742,7 @@ export default function Home() {
             localStorage.removeItem('math_simple_submitted');
             document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
             setHasSubmittedExam(false);
-            setSubmissionEvaluation(null);
+            setFinalScore(null);
             setSubmissionReference('');
           } catch {}
         }
@@ -778,7 +777,7 @@ export default function Home() {
           localStorage.removeItem('math_simple_submitted');
           document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
           setHasSubmittedExam(false);
-          setSubmissionEvaluation(null);
+          setFinalScore(null);
           setSubmissionReference('');
         } catch {}
         alert('✅ Seluruh data hasil ujian berhasil dihapus.');
@@ -1306,59 +1305,84 @@ export default function Home() {
         {/* VIEW 3: CONFIRMATION / RECEIPT (ZERO LEAKAGE)                           */}
         {/* ========================================================================= */}
         {activeView === 'result' && (
-          <section className="max-w-3xl mx-auto space-y-6">
-            {/* 1. Header & Confirmation Card */}
+          <section className="max-w-xl mx-auto space-y-6 animate-in fade-in duration-300">
+            {/* Header & Score Card */}
             <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm text-center">
-              <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-3xl mb-4">
+              <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-3xl mb-4 shadow-xs">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h2 className="text-2xl font-bold">Ujian Selesai & Berhasil Dikirim!</h2>
-              <p className="text-sm text-[var(--muted)] mt-2">
-                Terima kasih telah menyelesaikan seluruh rangkaian tes ketelitian matematika.
+              <h2 className="text-2xl font-bold">Terima Kasih! Ujian Telah Selesai</h2>
+              <p className="text-sm text-[var(--muted)] mt-2 leading-relaxed">
+                Terima kasih atas partisipasi Anda dalam mengikuti asesmen matematika ini. Seluruh lembar jawaban Anda telah berhasil kami terima dan tersimpan dengan aman di sistem penilaian HR.
               </p>
 
+              {/* TAMPILAN NILAI AKHIR */}
+              {finalScore !== null && (
+                <div className="my-6 p-6 rounded-2xl bg-gradient-to-b from-blue-50/80 to-blue-100/40 dark:from-blue-950/40 dark:to-blue-900/20 border-2 border-blue-200 dark:border-blue-800 text-center space-y-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-300 block">
+                    Nilai Akhir Ujian Anda
+                  </span>
+                  <div className="text-5xl font-black text-blue-600 dark:text-blue-400 tracking-tight">
+                    {finalScore}
+                    <span className="text-base font-normal text-[var(--muted)] ml-1">/ 100</span>
+                  </div>
+                  <div className="pt-2">
+                    <span
+                      className={`inline-block px-3.5 py-1 rounded-full text-xs font-bold ${
+                        finalScore >= 75
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300'
+                      }`}
+                    >
+                      {finalScore >= 75 ? '✓ Memenuhi Standar Kelulusan' : '⚠️ Perlu Remedial / Pembinaan'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)] pt-1">
+                    Skor resmi telah tercatat di basis data penguji HR untuk keperluan seleksi / penempatan karyawan.
+                  </p>
+                </div>
+              )}
+
               {/* Receipt Card */}
-              <div className="my-6 p-5 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-left text-xs space-y-3">
+              <div className="my-5 p-4 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-left text-xs space-y-2.5">
                 <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
                   <span className="text-[var(--muted)]">Nomor Bukti Pengiriman</span>
-                  <span className="font-mono font-bold text-blue-600">{submissionReference}</span>
+                  <span className="font-mono font-bold text-blue-600">{submissionReference || 'TERCATAT'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[var(--muted)]">Nama Lengkap Peserta</span>
+                  <span className="text-[var(--muted)]">Nama Peserta</span>
                   <span className="font-semibold text-blue-600">{fullName}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[var(--muted)]">Batas Waktu Ujian</span>
+                  <span className="text-[var(--muted)]">Durasi Ujian</span>
                   <span className="font-semibold">{examSettings.duration_minutes} Menit</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-[var(--muted)]">Status Database</span>
+                  <span className="text-[var(--muted)]">Status Penyimpanan</span>
                   {submissionSavedToDb === true ? (
-                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Supabase
-                    </span>
-                  ) : submissionSavedToDb === false ? (
-                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold text-xs flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5" /> Tersimpan di Server
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold text-xs flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Database
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
-                      Tersimpan di Server
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold text-xs flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Tersimpan di Server
                     </span>
                   )}
                 </div>
                 {submissionDbWarning && (
-                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 space-y-0.5">
-                    <span className="font-semibold flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> Info Database:
-                    </span>
+                  <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300">
                     <p>{submissionDbWarning}</p>
                   </div>
                 )}
               </div>
 
+              {/* Notice Kerahasiaan Soal */}
+              <div className="p-3.5 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-xs text-[var(--muted)] text-center leading-relaxed">
+                🔒 <em>Catatan: Untuk menjaga kerahasiaan dan integritas bank soal, rincian butir soal dan evaluasi kunci jawaban hanya dapat diakses secara terpusat oleh tim penguji melalui Dashboard HR.</em>
+              </div>
+
               {/* Action Buttons */}
-              <div className="flex flex-wrap gap-3 justify-center">
+              <div className="flex flex-wrap gap-3 justify-center pt-2">
                 <button
                   onClick={() => {
                     setActiveView('intro');
@@ -1369,220 +1393,12 @@ export default function Home() {
                 </button>
                 <button
                   onClick={handleOpenAdmin}
-                  className="py-2.5 px-5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5"
+                  className="py-2.5 px-5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Lock className="w-3.5 h-3.5" /> Akses HR Admin
                 </button>
               </div>
             </div>
-
-            {/* 2. HASIL EVALUASI & PEMBAHASAN SOAL (LIHAT SOAL MANA YANG SALAH) */}
-            {submissionEvaluation && (
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
-                  <div>
-                    <h3 className="text-xl font-bold flex items-center gap-2">
-                      <BarChart3 className="w-5 h-5 text-blue-600" />
-                      Evaluasi & Pembahasan Butir Soal
-                    </h3>
-                    <p className="text-xs text-[var(--muted)] mt-1">
-                      Pelajari soal mana saja yang salah dijawab untuk evaluasi dan perbaikan ketelitian Anda.
-                    </p>
-                  </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      submissionEvaluation.score >= 75
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                    }`}
-                  >
-                    Skor Akhir: {submissionEvaluation.score} / 100 ({submissionEvaluation.score >= 75 ? 'Lulus' : 'Remedial'})
-                  </span>
-                </div>
-
-                {/* Score Tiles */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-center">
-                    <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">Total Nilai</span>
-                    <p className="text-2xl font-extrabold text-blue-600 mt-1">{submissionEvaluation.score}</p>
-                    <span className="text-[10px] text-[var(--muted)]">Skala 0 - 100</span>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 text-center">
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center justify-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Jawaban Benar
-                    </span>
-                    <p className="text-2xl font-extrabold text-emerald-600 mt-1">
-                      {submissionEvaluation.totalCorrect} <span className="text-xs font-normal text-[var(--muted)]">/ {submissionEvaluation.totalQuestions}</span>
-                    </p>
-                    <span className="text-[10px] text-[var(--muted)]">Tingkat Akurasi {Math.round((submissionEvaluation.totalCorrect / submissionEvaluation.totalQuestions) * 100)}%</span>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-red-50/60 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 text-center">
-                    <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 flex items-center justify-center gap-1">
-                      <XCircle className="w-3.5 h-3.5" /> Jawaban Salah
-                    </span>
-                    <p className="text-2xl font-extrabold text-red-600 mt-1">
-                      {submissionEvaluation.totalIncorrect} <span className="text-xs font-normal text-[var(--muted)]">Soal</span>
-                    </p>
-                    <span className="text-[10px] text-red-600 dark:text-red-400 font-medium">⚠️ Perlu Evaluasi</span>
-                  </div>
-                </div>
-
-                {/* Filter Tabs */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                  <span className="text-xs font-semibold text-[var(--muted)]">Tampilkan Butir Soal:</span>
-                  <div className="inline-flex rounded-xl p-1 bg-[var(--background)] border border-[var(--border)] text-xs">
-                    <button
-                      onClick={() => setParticipantEvaluationFilter('wrong')}
-                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
-                        participantEvaluationFilter === 'wrong'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-                      }`}
-                    >
-                      <XCircle className="w-3.5 h-3.5" />
-                      <span>Hanya Yang Salah ({submissionEvaluation.totalIncorrect})</span>
-                    </button>
-                    <button
-                      onClick={() => setParticipantEvaluationFilter('all')}
-                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
-                        participantEvaluationFilter === 'all'
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-                      }`}
-                    >
-                      <span>Semua Soal ({submissionEvaluation.totalQuestions})</span>
-                    </button>
-                    <button
-                      onClick={() => setParticipantEvaluationFilter('correct')}
-                      className={`px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
-                        participantEvaluationFilter === 'correct'
-                          ? 'bg-emerald-600 text-white shadow-xs'
-                          : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-                      }`}
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Yang Benar ({submissionEvaluation.totalCorrect})</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* List of Evaluated Questions */}
-                <div className="space-y-4 pt-2">
-                  {(() => {
-                    const filtered = submissionEvaluation.answers.filter((q) => {
-                      if (participantEvaluationFilter === 'wrong') return !q.is_correct;
-                      if (participantEvaluationFilter === 'correct') return q.is_correct;
-                      return true;
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <div className="p-8 text-center rounded-2xl bg-[var(--background)] border border-[var(--border)] text-xs text-[var(--muted)]">
-                          {participantEvaluationFilter === 'wrong' ? (
-                            <div className="space-y-1">
-                              <p className="text-base font-bold text-emerald-600">🎉 Luar Biasa!</p>
-                              <p>Tidak ada jawaban yang salah. Seluruh soal berhasil dijawab dengan tepat.</p>
-                            </div>
-                          ) : (
-                            <p>Tidak ada butir soal dalam filter ini.</p>
-                          )}
-                        </div>
-                      );
-                    }
-
-                    return filtered.map((q) => (
-                      <div
-                        key={q.question_id}
-                        className={`p-4 md:p-5 rounded-2xl border transition-all text-left ${
-                          q.is_correct
-                            ? 'bg-emerald-500/5 border-emerald-500/25 dark:border-emerald-500/20'
-                            : 'bg-red-500/5 border-red-500/30 dark:border-red-500/20'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold bg-[var(--background)] border border-[var(--border)]">
-                              No. {q.question_order}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
-                              {q.category}
-                            </span>
-                            <span className="text-[11px] text-[var(--muted)]">{q.difficulty}</span>
-                          </div>
-                          {q.is_correct ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1 border border-emerald-300 dark:border-emerald-800">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Jawaban Benar
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 flex items-center gap-1 border border-red-300 dark:border-red-800">
-                              <XCircle className="w-3.5 h-3.5" /> Jawaban Salah (Perlu Evaluasi)
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Question Text */}
-                        <p className="text-sm font-semibold text-[var(--foreground)] mb-3 leading-relaxed">
-                          {q.question_text}
-                        </p>
-
-                        {/* Options if MCQ */}
-                        {q.options && q.options.length > 0 && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mb-3 text-xs">
-                            {q.options.map((opt, oIdx) => {
-                              const isThisSubmitted = q.submitted_answer?.trim() === opt.trim();
-                              const isThisCorrect = q.correct_answer?.trim() === opt.trim();
-                              return (
-                                <div
-                                  key={oIdx}
-                                  className={`p-2 rounded-xl border text-[11px] flex items-center justify-between ${
-                                    isThisCorrect
-                                      ? 'bg-emerald-100/70 border-emerald-400 font-bold text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-200'
-                                      : isThisSubmitted
-                                      ? 'bg-red-100/70 border-red-400 font-semibold text-red-900 dark:bg-red-950/70 dark:text-red-200'
-                                      : 'bg-[var(--background)] border-[var(--border)] text-[var(--muted)]'
-                                  }`}
-                                >
-                                  <span>{String.fromCharCode(65 + oIdx)}. {opt}</span>
-                                  {isThisCorrect && <span className="text-[10px] text-emerald-700 font-bold">✓ Kunci</span>}
-                                  {isThisSubmitted && !isThisCorrect && <span className="text-[10px] text-red-600 font-bold">✗ Pilihan Anda</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* Submitted vs Correct Comparison Boxes */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
-                          <div
-                            className={`p-2.5 rounded-xl border ${
-                              q.is_correct
-                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-200'
-                                : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800/60 text-red-800 dark:text-red-200'
-                            }`}
-                          >
-                            <span className="text-[10px] font-semibold uppercase tracking-wider block opacity-75">
-                              Jawaban Anda:
-                            </span>
-                            <span className="font-bold text-sm block mt-0.5">
-                              {q.submitted_answer ? q.submitted_answer : <em className="text-red-500 font-normal">(Tidak Dijawab)</em>}
-                            </span>
-                          </div>
-
-                          <div className="p-2.5 rounded-xl border bg-emerald-100/80 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-100">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider block text-emerald-700 dark:text-emerald-300">
-                              Kunci Jawaban Resmi:
-                            </span>
-                            <span className="font-bold text-sm block mt-0.5 text-emerald-800 dark:text-emerald-200">
-                              {q.correct_answer}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              </div>
-            )}
           </section>
         )}
 
@@ -1760,7 +1576,7 @@ export default function Home() {
                             localStorage.removeItem('math_simple_submitted');
                             document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
                             setHasSubmittedExam(false);
-                            setSubmissionEvaluation(null);
+                            setFinalScore(null);
                             setSubmissionReference('');
                             setFullName('');
                             alert('Kunci ujian pada browser/perangkat ini berhasil di-reset.');

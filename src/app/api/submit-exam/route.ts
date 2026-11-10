@@ -294,15 +294,9 @@ export async function POST(req: NextRequest) {
         durationMinutes: allowedDurationMinutes,
         savedToSupabase: dbSaved,
         dbWarning: dbErrorMsg,
-        message: 'Jawaban ujian telah berhasil diserahkan.',
-        evaluation: {
-          score: totalScore,
-          totalQuestions,
-          totalCorrect: correctCount,
-          totalIncorrect: totalQuestions - correctCount,
-          category_stats: categoryStats,
-          answers: richAnswers,
-        },
+        message: 'Terima kasih telah menyelesaikan ujian. Jawaban Anda telah berhasil diserahkan.',
+        score: totalScore,
+        totalQuestions,
       },
       {
         headers: {
