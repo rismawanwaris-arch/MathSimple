@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
 
         if (!qErr && qData && qData.length > 0) {
           const hasSimplified = qData.some((q: any) =>
-            q.question_text?.includes('150.000') || q.correct_answer === '150.000'
+            q.correct_answer === '150.000' && q.question_text?.includes('(contoh: 150.000)')
           );
           if (hasSimplified) {
             authoritativeQuestions = qData;

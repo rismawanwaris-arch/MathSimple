@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       if (!error && data && data.length > 0) {
         // Auto-migrasi jika database masih berisi bank soal lama (belum berisi format nominal sederhana 150.000)
         const hasSimplified = data.some((q: any) =>
-          q.question_text?.includes('150.000')
+          q.question_text?.includes('(contoh: 150.000)')
         );
 
         if (!hasSimplified) {
