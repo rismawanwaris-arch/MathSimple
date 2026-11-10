@@ -60,6 +60,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Nama peserta tidak valid.' }, { status: 400 });
     }
 
+    // 1b. Cek Kunci Perangkat: jika perangkat sudah pernah kirim ujian, tolak pengiriman ulang
+    if (req.cookies.get('exam_submitted_lock')?.value) {
+      return NextResponse.json(
+        { error: 'Ujian pada perangkat ini sudah pernah dikirimkan sebelumnya dan telah terkunci.' },
+        { status: 409 }
+      );
+    }
+
+    // 1c. Cek Duplikasi Nama Peserta di Database: cegah pengiriman ulang atas nama yang sama
+    if (isServerSupabaseConfigured && supabaseServer) {
+      try {
+        const { data: existingP } = await supabaseServer
+          .from('participants')
+          .select('id, full_name, exam_sessions(id, status)')
+          .ilike('full_name', sanitizedName)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingP && existingP.exam_sessions?.some((s: any) => s.status === 'completed' || s.status === 'timed_out')) {
+          return NextResponse.json(
+            { error: `Peserta atas nama "${sanitizedName}" sudah pernah menyelesaikan dan mengirimkan ujian. Pengiriman ulang ditolak demi integritas penilaian.` },
+            { status: 409 }
+          );
+        }
+      } catch (chkErr) {
+        console.warn('Gagal cek status duplikasi peserta:', chkErr);
+      }
+    }
+
     // 2. Verifikasi Token Waktu Mulai Ujian dari Server (anti-manipulasi startedAt & anti-replay)
     const cookieTicket = req.cookies.get('exam_ticket')?.value;
     const verifiedCookie = verifyExamToken(cookieTicket);
@@ -282,6 +312,14 @@ export async function POST(req: NextRequest) {
     );
     // Hapus tiket ujian agar tidak bisa dipakai ulang
     res.cookies.set('exam_ticket', '', { httpOnly: true, maxAge: 0, path: '/' });
+    // Pasang cookie pengunci perangkat (30 hari)
+    res.cookies.set('exam_submitted_lock', 'true', {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 30 * 24 * 60 * 60,
+      path: '/',
+    });
     if (rl.cookieValue && rl.maxAgeSec) {
       res.cookies.set(RL_SUBMIT_COOKIE, rl.cookieValue, {
         httpOnly: true,

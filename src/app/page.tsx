@@ -31,6 +31,7 @@ import {
   BarChart3,
   FileText,
   X,
+  Unlock,
 } from 'lucide-react';
 import { Question, ExamSettings, ExamSession, ExamAnswerDetail, ExamEvaluationSummary } from '@/types';
 
@@ -64,6 +65,10 @@ export default function Home() {
   const [submissionSavedToDb, setSubmissionSavedToDb] = useState<boolean | null>(null);
   const [submissionDbWarning, setSubmissionDbWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Kunci Anti-Akses Ulang Ujian (Permanen setelah kirim)
+  const [hasSubmittedExam, setHasSubmittedExam] = useState(false);
+  const [lockedReason, setLockedReason] = useState<string | null>(null);
 
   // Participant Result Evaluation State
   const [submissionEvaluation, setSubmissionEvaluation] = useState<{
@@ -129,11 +134,35 @@ export default function Home() {
 
   // 1. Fetch Sanitized Questions & Public Settings from Secure API on Mount
   useEffect(() => {
+    // Cek apakah perangkat/browser ini sudah pernah mengirimkan ujian sebelumnya
+    try {
+      const stored = localStorage.getItem('math_simple_submitted');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.referenceCode) {
+          setHasSubmittedExam(true);
+          setFullName(parsed.fullName || '');
+          setSubmissionReference(parsed.referenceCode);
+          setSubmissionSavedToDb(parsed.savedToSupabase ?? true);
+          if (parsed.evaluation) {
+            setSubmissionEvaluation(parsed.evaluation);
+            setParticipantEvaluationFilter(parsed.evaluation.totalIncorrect > 0 ? 'wrong' : 'all');
+          }
+          setActiveView('result');
+        }
+      }
+    } catch {
+      // Abaikan jika parsing gagal
+    }
+
     async function loadPublicData() {
       try {
         const res = await fetch('/api/questions', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
+          if (data.isDeviceLocked) {
+            setHasSubmittedExam(true);
+          }
           if (data.questions && data.questions.length > 0) {
             setQuestions(data.questions);
           }
@@ -211,9 +240,42 @@ export default function Home() {
   const handleStartExam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) return;
+
+    if (hasSubmittedExam) {
+      alert(`Ujian Anda atas nama "${fullName}" sudah pernah dikirimkan sebelumnya (Nomor Bukti: ${submissionReference || 'TERCATAT'}). Akses ujian telah ditutup secara permanen demi integritas hasil asesmen.`);
+      setActiveView('result');
+      return;
+    }
+
     if (questions.length === 0) {
       alert('Soal belum berhasil dimuat. Silakan muat ulang halaman.');
       return;
+    }
+
+    // Minta tiket waktu mulai resmi yang ditandatangani jam server + verifikasi duplikasi peserta
+    try {
+      const startRes = await fetch('/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName }),
+        cache: 'no-store',
+      });
+
+      if (!startRes.ok) {
+        const errData = await startRes.json();
+        alert(errData.error || 'Akses pengerjaan ujian ditolak oleh server.');
+        if (startRes.status === 403 || startRes.status === 409) {
+          setHasSubmittedExam(true);
+          setLockedReason(errData.error);
+        }
+        return;
+      }
+
+      const startData = await startRes.json();
+      if (startData.examToken) setExamToken(startData.examToken);
+      if (startData.startedAt) setExamStartTime(startData.startedAt);
+    } catch {
+      // Jika offline, lanjutkan dengan token awal
     }
 
     setUserAnswers({});
@@ -226,18 +288,6 @@ export default function Home() {
     setTimeLeft(examSettings.duration_minutes * 60);
     setIsTimerRunning(true);
     setActiveView('exam');
-
-    // Minta tiket waktu mulai resmi yang ditandatangani jam server
-    try {
-      const startRes = await fetch('/api/questions', { method: 'POST', cache: 'no-store' });
-      if (startRes.ok) {
-        const startData = await startRes.json();
-        if (startData.examToken) setExamToken(startData.examToken);
-        if (startData.startedAt) setExamStartTime(startData.startedAt);
-      }
-    } catch {
-      // Gunakan token awal dari saat halaman dimuat
-    }
   };
 
   // Select MCQ Answer
@@ -305,11 +355,31 @@ export default function Home() {
           setSubmissionEvaluation(result.evaluation);
           setParticipantEvaluationFilter(result.evaluation.totalIncorrect > 0 ? 'wrong' : 'all');
         }
+
+        // KUNCI UJIAN PERMANEN: cegah akses ulang pada perangkat ini
+        setHasSubmittedExam(true);
+        const savedData = {
+          fullName,
+          referenceCode: result.referenceCode,
+          submittedAt: result.submittedAt || new Date().toISOString(),
+          evaluation: result.evaluation || null,
+          savedToSupabase: result.savedToSupabase ?? false,
+        };
+        try {
+          localStorage.setItem('math_simple_submitted', JSON.stringify(savedData));
+          document.cookie = 'exam_submitted_lock=true; max-age=2592000; path=/; samesite=strict';
+        } catch {
+          // localStorage fallback
+        }
       } else {
         // Fallback reference code
         setSubmissionReference(`SUBMIT-${Math.floor(1000 + Math.random() * 9000)}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
         setSubmissionSavedToDb(false);
         setSubmissionDbWarning(result.error || 'Gagal menyimpan ke database');
+        if (response.status === 403 || response.status === 409) {
+          setHasSubmittedExam(true);
+          setLockedReason(result.error);
+        }
       }
     } catch {
       setSubmissionReference(`SUBMIT-OFFLINE-${Math.floor(1000 + Math.random() * 9000)}`);
@@ -317,6 +387,8 @@ export default function Home() {
       setSubmissionDbWarning('Koneksi jaringan terputus saat pengiriman');
     }
 
+    // Kosongkan jawaban aktif agar lembar ujian tidak dapat dimanipulasi
+    setUserAnswers({});
     setIsSubmitting(false);
     setActiveView('result');
 
@@ -666,6 +738,15 @@ export default function Home() {
       const data = await res.json();
       if (res.ok && data.success) {
         setAdminSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (name.toLowerCase() === fullName.toLowerCase()) {
+          try {
+            localStorage.removeItem('math_simple_submitted');
+            document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
+            setHasSubmittedExam(false);
+            setSubmissionEvaluation(null);
+            setSubmissionReference('');
+          } catch {}
+        }
         alert(`✅ Data ujian peserta "${name}" berhasil dihapus.`);
       } else {
         alert(data.error || 'Gagal menghapus data.');
@@ -693,6 +774,13 @@ export default function Home() {
       const data = await res.json();
       if (res.ok && data.success) {
         setAdminSessions([]);
+        try {
+          localStorage.removeItem('math_simple_submitted');
+          document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
+          setHasSubmittedExam(false);
+          setSubmissionEvaluation(null);
+          setSubmissionReference('');
+        } catch {}
         alert('✅ Seluruh data hasil ujian berhasil dihapus.');
       } else {
         alert(data.error || 'Gagal menghapus data.');
@@ -764,18 +852,43 @@ export default function Home() {
           >
             Form Peserta
           </button>
-          <button
-            onClick={() => {
-              if (fullName) setActiveView('exam');
-              else alert('Silakan masukkan Nama Lengkap terlebih dahulu.');
-            }}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-              activeView === 'exam' ? 'bg-[var(--card)] text-blue-600 font-bold shadow-xs' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            <Timer className="w-3.5 h-3.5" />
-            Ujian ({examSettings.duration_minutes}m)
-          </button>
+
+          {hasSubmittedExam ? (
+            <button
+              disabled
+              className="px-3 py-1.5 rounded-lg text-gray-400 dark:text-gray-500 opacity-60 cursor-not-allowed flex items-center gap-1"
+              title="Ujian telah selesai dikirimkan dan terkunci demi integritas asesmen."
+            >
+              <Lock className="w-3.5 h-3.5 text-gray-400" />
+              Ujian (Terkunci)
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (fullName) setActiveView('exam');
+                else alert('Silakan masukkan Nama Lengkap terlebih dahulu.');
+              }}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
+                activeView === 'exam' ? 'bg-[var(--card)] text-blue-600 font-bold shadow-xs' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <Timer className="w-3.5 h-3.5" />
+              Ujian ({examSettings.duration_minutes}m)
+            </button>
+          )}
+
+          {hasSubmittedExam && (
+            <button
+              onClick={() => setActiveView('result')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
+                activeView === 'result' ? 'bg-[var(--card)] text-emerald-600 font-bold shadow-xs' : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              Hasil Ujian
+            </button>
+          )}
+
           <button
             onClick={handleOpenAdmin}
             className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
@@ -855,6 +968,31 @@ export default function Home() {
               </button>
             </div>
 
+            {/* LOCKED NOTICE IF EXAM ALREADY SUBMITTED */}
+            {hasSubmittedExam && (
+              <div className="mb-6 p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700 text-amber-950 dark:text-amber-200 space-y-3">
+                <div className="flex items-center gap-2 font-bold text-sm text-amber-800 dark:text-amber-300">
+                  <Lock className="w-4 h-4 text-amber-600" />
+                  Ujian Telah Selesai Dikirimkan & Terkunci
+                </div>
+                <p className="text-xs leading-relaxed">
+                  Peserta atas nama <strong>{fullName || 'Anda'}</strong> telah menyelesaikan ujian dan mengirimkan jawaban (Nomor Bukti: <code className="bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 rounded font-mono font-bold text-blue-700 dark:text-blue-300">{submissionReference || 'TERCATAT'}</code>).
+                </p>
+                <p className="text-xs text-[var(--muted)]">
+                  Untuk menjaga integritas dan keaslian penilaian, lembar ujian tidak dapat diakses atau dikerjakan kembali.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('result')}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BarChart3 className="w-4 h-4" /> Buka Hasil Ujian & Bukti
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* FORM HANYA NAMA */}
             <form onSubmit={handleStartExam} className="space-y-4">
               <div>
@@ -862,29 +1000,70 @@ export default function Home() {
                 <input
                   type="text"
                   required
+                  disabled={hasSubmittedExam}
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Ketikkan nama lengkap Anda..."
-                  className="w-full px-4 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] text-base font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  className={`w-full px-4 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] text-base font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
+                    hasSubmittedExam ? 'opacity-60 cursor-not-allowed bg-gray-100 dark:bg-gray-800/40' : ''
+                  }`}
                 />
-                <p className="text-[11px] text-[var(--muted)] mt-1.5">Cukup masukkan nama Anda untuk memulai ujian.</p>
+                <p className="text-[11px] text-[var(--muted)] mt-1.5">
+                  {hasSubmittedExam
+                    ? 'Akses pendaftaran ditutup karena Anda telah menyelesaikan ujian.'
+                    : 'Cukup masukkan nama Anda untuk memulai ujian.'}
+                </p>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2"
+                disabled={hasSubmittedExam}
+                className={`w-full py-3.5 px-4 font-semibold text-sm rounded-xl shadow transition-all flex items-center justify-center gap-2 ${
+                  hasSubmittedExam
+                    ? 'bg-gray-400 dark:bg-gray-700 cursor-not-allowed text-white opacity-70'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                }`}
               >
-                Mulai Ujian Sekarang ({examSettings.duration_minutes} Menit)
-                <ChevronRight className="w-4 h-4" />
+                {hasSubmittedExam ? (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    Ujian Sudah Selesai Dikirim (Akses Ditutup)
+                  </>
+                ) : (
+                  <>
+                    Mulai Ujian Sekarang ({examSettings.duration_minutes} Menit)
+                    <ChevronRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
           </section>
         )}
 
         {/* ========================================================================= */}
-        {/* VIEW 2: EXAM PANEL (HARDENED ANTI-CHEAT)                                */}
+        {/* VIEW 2: EXAM PANEL (HARDENED ANTI-CHEAT & ANTI-RETAKE)                   */}
         {/* ========================================================================= */}
-        {activeView === 'exam' && (
+        {activeView === 'exam' && hasSubmittedExam && (
+          <section className="max-w-xl mx-auto p-8 bg-[var(--card)] border border-[var(--border)] rounded-3xl text-center space-y-4 shadow-sm my-8">
+            <div className="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center justify-center text-3xl">
+              <Lock className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold">Akses Lembar Ujian Ditutup</h3>
+            <p className="text-sm text-[var(--muted)] leading-relaxed">
+              Ujian telah selesai dikirimkan ke server. Anda tidak dapat mengakses atau mengerjakan kembali soal ujian demi integritas data asesmen.
+            </p>
+            <div className="pt-2">
+              <button
+                onClick={() => setActiveView('result')}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow-xs cursor-pointer"
+              >
+                Lihat Hasil Penilaian & Bukti
+              </button>
+            </div>
+          </section>
+        )}
+
+        {activeView === 'exam' && !hasSubmittedExam && (
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             {/* Left Column: Active Question (8 cols) */}
             <div className="lg:col-span-8 space-y-4">
@@ -1182,10 +1361,9 @@ export default function Home() {
               <div className="flex flex-wrap gap-3 justify-center">
                 <button
                   onClick={() => {
-                    setFullName('');
                     setActiveView('intro');
                   }}
-                  className="py-2.5 px-5 border border-[var(--border)] hover:bg-[var(--background)] text-xs rounded-xl font-medium transition-all"
+                  className="py-2.5 px-5 border border-[var(--border)] hover:bg-[var(--background)] text-xs rounded-xl font-medium transition-all cursor-pointer"
                 >
                   Kembali ke Halaman Depan
                 </button>
@@ -1576,6 +1754,24 @@ export default function Home() {
                   <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--border)] flex-wrap gap-2">
                     <h3 className="font-bold text-sm">Daftar Hasil Ujian Karyawan</h3>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (confirm('Buka kunci ujian pada perangkat/browser ini? Ini berguna jika HR ingin mencoba ujian ulang di browser ini.')) {
+                            localStorage.removeItem('math_simple_submitted');
+                            document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
+                            setHasSubmittedExam(false);
+                            setSubmissionEvaluation(null);
+                            setSubmissionReference('');
+                            setFullName('');
+                            alert('Kunci ujian pada browser/perangkat ini berhasil di-reset.');
+                            setActiveView('intro');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-purple-300 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-purple-700 dark:text-purple-300 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                        title="Buka status terkunci pada perangkat/browser ini"
+                      >
+                        <Unlock className="w-3.5 h-3.5" /> Buka Kunci Perangkat
+                      </button>
                       {adminSessions.length > 0 && (
                         <button
                           onClick={handleDeleteAllSessions}
