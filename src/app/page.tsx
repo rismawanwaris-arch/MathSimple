@@ -157,9 +157,6 @@ export default function Home() {
         const res = await fetch('/api/questions', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
-          if (data.isDeviceLocked) {
-            setHasSubmittedExam(true);
-          }
           if (data.questions && data.questions.length > 0) {
             setQuestions(data.questions);
           }
@@ -238,18 +235,12 @@ export default function Home() {
     e.preventDefault();
     if (!fullName.trim()) return;
 
-    if (hasSubmittedExam) {
-      alert(`Ujian Anda atas nama "${fullName}" sudah pernah dikirimkan sebelumnya (Nomor Bukti: ${submissionReference || 'TERCATAT'}). Akses ujian telah ditutup secara permanen demi integritas hasil asesmen.`);
-      setActiveView('result');
-      return;
-    }
-
     if (questions.length === 0) {
       alert('Soal belum berhasil dimuat. Silakan muat ulang halaman.');
       return;
     }
 
-    // Minta tiket waktu mulai resmi yang ditandatangani jam server + verifikasi duplikasi peserta
+    // Minta tiket waktu mulai resmi yang ditandatangani jam server
     try {
       const startRes = await fetch('/api/questions', {
         method: 'POST',
@@ -261,10 +252,6 @@ export default function Home() {
       if (!startRes.ok) {
         const errData = await startRes.json();
         alert(errData.error || 'Akses pengerjaan ujian ditolak oleh server.');
-        if (startRes.status === 403 || startRes.status === 409) {
-          setHasSubmittedExam(true);
-          setLockedReason(errData.error);
-        }
         return;
       }
 
@@ -274,6 +261,7 @@ export default function Home() {
     } catch {
       // Jika offline, lanjutkan dengan token awal
     }
+
 
     setUserAnswers({});
     setFlaggedQuestions([]);
@@ -366,7 +354,7 @@ export default function Home() {
         };
         try {
           localStorage.setItem('math_simple_submitted', JSON.stringify(savedData));
-          document.cookie = 'exam_submitted_lock=true; max-age=2592000; path=/; samesite=strict';
+          document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
         } catch {
           // localStorage fallback
         }
@@ -376,7 +364,6 @@ export default function Home() {
         setSubmissionSavedToDb(false);
         setSubmissionDbWarning(result.error || 'Gagal menyimpan ke database');
         if (response.status === 403 || response.status === 409) {
-          setHasSubmittedExam(true);
           setLockedReason(result.error);
         }
       }
@@ -401,6 +388,26 @@ export default function Home() {
     } catch {
       // Fallback safe
     }
+  };
+
+  // Handler untuk memulai sesi ujian baru dari awal (tanpa bisa melanjutkan sesi lama)
+  const handleStartNewExam = () => {
+    setFullName('');
+    setUserAnswers({});
+    setFlaggedQuestions([]);
+    setCurrentQIndex(0);
+    setTimeLeft(examSettings.duration_minutes * 60);
+    setFinalScore(null);
+    setSubmissionReference('');
+    setSubmissionSavedToDb(null);
+    setSubmissionDbWarning(null);
+    setHasSubmittedExam(false);
+    setLockedReason(null);
+    try {
+      localStorage.removeItem('math_simple_submitted');
+      document.cookie = 'exam_submitted_lock=; Max-Age=0; path=/;';
+    } catch {}
+    setActiveView('intro');
   };
 
   // Admin PIN Authentication Handlers
@@ -1384,12 +1391,10 @@ export default function Home() {
               {/* Action Buttons */}
               <div className="flex flex-wrap gap-3 justify-center pt-2">
                 <button
-                  onClick={() => {
-                    setActiveView('intro');
-                  }}
-                  className="py-2.5 px-5 border border-[var(--border)] hover:bg-[var(--background)] text-xs rounded-xl font-medium transition-all cursor-pointer"
+                  onClick={handleStartNewExam}
+                  className="py-2.5 px-5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center gap-1.5 cursor-pointer"
                 >
-                  Kembali ke Halaman Depan
+                  <RotateCcw className="w-3.5 h-3.5" /> Mulai Ujian Baru
                 </button>
                 <button
                   onClick={handleOpenAdmin}
