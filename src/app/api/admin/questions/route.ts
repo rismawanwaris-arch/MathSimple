@@ -55,6 +55,18 @@ export async function GET(req: NextRequest) {
     if (isServerSupabaseConfigured && supabaseServer) {
       const { data, error } = await supabaseServer.from('questions').select('*').order('question_order', { ascending: true });
       if (!error && data && data.length > 0) {
+        const hasKonter = data.some((q: any) =>
+          q.question_text?.toLowerCase().includes('tarik tunai') ||
+          q.question_text?.toLowerCase().includes('pulsa')
+        );
+        if (!hasKonter) {
+          try {
+            await supabaseServer.from('questions').upsert(defaultQuestions);
+            return NextResponse.json({ questions: defaultQuestions }, { headers: { 'Cache-Control': 'no-store' } });
+          } catch {
+            return NextResponse.json({ questions: data }, { headers: { 'Cache-Control': 'no-store' } });
+          }
+        }
         return NextResponse.json({ questions: data }, { headers: { 'Cache-Control': 'no-store' } });
       }
     }
@@ -64,14 +76,27 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: Add new question or batch import
+// POST: Add new question or batch import or sync Konter questions
 export async function POST(req: NextRequest) {
   const denied = requireAdmin(req);
   if (denied) return denied;
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { questions: batch, question } = body || {};
+    const { questions: batch, question, syncKonterSoal, syncDefault } = body || {};
+
+    if (syncKonterSoal || syncDefault) {
+      if (isServerSupabaseConfigured && supabaseServer) {
+        const { error } = await supabaseServer.from('questions').upsert(defaultQuestions);
+        if (error) throw error;
+      }
+      return NextResponse.json({
+        success: true,
+        message: 'Bank soal berhasil disinkronkan ke 30 butir soal Konter Pulsa & Tarik Tunai.',
+        count: defaultQuestions.length,
+        questions: defaultQuestions,
+      });
+    }
 
     if (!isServerSupabaseConfigured || !supabaseServer) {
       return NextResponse.json({ success: true, message: 'Disimpan secara lokal.' });

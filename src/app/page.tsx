@@ -121,6 +121,9 @@ export default function Home() {
   const [copiedTemplate, setCopiedTemplate] = useState<string | null>(null);
   const [aiJsonInput, setAiJsonInput] = useState('');
 
+  // Acuan Tarif Modal State
+  const [isTarifModalOpen, setIsTarifModalOpen] = useState(false);
+
   // Timer Ref
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -538,6 +541,34 @@ export default function Home() {
     }
   };
 
+  // Terapkan 30 butir soal Konter Pulsa & Tarik Tunai ke database
+  const handleSyncKonterQuestions = async () => {
+    if (!window.confirm('Terapkan 30 butir soal baru skema Konter Pulsa & Tarik Tunai ke database? Tindakan ini akan memperbarui bank soal secara resmi.')) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncKonterSoal: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('🎉 Berhasil! 30 butir soal skema Konter Pulsa & Tarik Tunai telah aktif di database.');
+        loadAdminDashboardData();
+        const qRes = await fetch('/api/questions', { cache: 'no-store' });
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          if (qData.questions) setQuestions(qData.questions);
+        }
+      } else {
+        alert(data.error || 'Gagal menyinkronkan soal.');
+      }
+    } catch {
+      alert('Terjadi kesalahan jaringan.');
+    }
+  };
+
   // AI Import JSON (Admin only)
   const handleImportJson = async () => {
     try {
@@ -807,6 +838,23 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Tombol Acuan Tarif Admin */}
+            <div className="mb-6">
+              <button
+                type="button"
+                onClick={() => setIsTarifModalOpen(true)}
+                className="w-full py-2.5 px-4 rounded-2xl border border-blue-500/30 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-semibold text-xs transition-all flex items-center justify-between shadow-xs cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-base">📋</span>
+                  <span>Tabel Acuan Tarif Admin (Transfer & QRIS)</span>
+                </span>
+                <span className="text-[10px] bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-100 px-2.5 py-1 rounded-full font-bold">
+                  Buka Pedoman
+                </span>
+              </button>
+            </div>
+
             {/* FORM HANYA NAMA */}
             <form onSubmit={handleStartExam} className="space-y-4">
               <div>
@@ -865,16 +913,29 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Countdown Timer */}
-                <div
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border font-mono font-bold text-sm ${
-                    timeLeft <= 120
-                      ? 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400 animate-pulse'
-                      : 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400'
-                  }`}
-                >
-                  <Timer className="w-4 h-4" />
-                  <span>{formatTime(timeLeft)}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsTarifModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                    title="Buka Acuan Tarif Admin Resmi"
+                  >
+                    <span>📋</span>
+                    <span className="hidden sm:inline">Acuan Tarif Admin</span>
+                    <span className="sm:hidden">Tarif</span>
+                  </button>
+
+                  {/* Countdown Timer */}
+                  <div
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border font-mono font-bold text-sm ${
+                      timeLeft <= 120
+                        ? 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400 animate-pulse'
+                        : 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400'
+                    }`}
+                  >
+                    <Timer className="w-4 h-4" />
+                    <span>{formatTime(timeLeft)}</span>
+                  </div>
                 </div>
               </div>
 
@@ -1625,16 +1686,23 @@ export default function Home() {
                     <h3 className="font-bold text-sm">Daftar Bank Soal & Kunci Jawaban</h3>
                     <p className="text-xs text-[var(--muted)]">Kelola butir soal. Kunci jawaban di sini terlindungi di server dan tidak pernah dikirim ke peserta.</p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={handleSyncKonterQuestions}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs shadow flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Terapkan 30 butir soal baru skema Konter Pulsa & Tarik Tunai sesuai tarif admin resmi"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Terapkan Soal Konter & Tarik Tunai
+                    </button>
                     <button
                       onClick={handleOpenAddQuestion}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow flex items-center gap-1.5 transition-all"
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs shadow flex items-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" /> Input Soal Baru
                     </button>
                     <button
                       onClick={() => setAdminTab('ai')}
-                      className="px-3.5 py-1.5 border border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 font-medium rounded-xl text-xs flex items-center gap-1.5 transition-all"
+                      className="px-3.5 py-1.5 border border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 font-medium rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5" /> Generate via AI
                     </button>
@@ -2334,6 +2402,165 @@ Berikan HANYA output format JSON array valid:
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-all cursor-pointer shadow-xs"
               >
                 Tutup Evaluasi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 4: TABEL ACUAN TARIF ADMIN TARIK TUNAI & TRANSFER                   */}
+      {/* ========================================================================= */}
+      {isTarifModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsTarifModalOpen(false);
+          }}
+        >
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-[var(--border)] flex items-center justify-between bg-[var(--background)]">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 block">
+                  Pedoman Resmi Kasir & Konter
+                </span>
+                <h3 className="text-base sm:text-lg font-bold text-[var(--foreground)] flex items-center gap-2">
+                  <span>📋</span> Tabel Acuan Tarif Admin Tarik Tunai
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsTarifModalOpen(false)}
+                className="w-8 h-8 rounded-full border border-[var(--border)] flex items-center justify-center hover:bg-[var(--background)] text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer text-lg font-bold"
+                aria-label="Tutup"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-5 text-xs sm:text-sm">
+              {/* Info Note */}
+              <div className="p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 flex items-center gap-2 text-xs">
+                <span>💡</span>
+                <span>Tabel ini merupakan acuan resmi perhitungan biaya admin transaksi untuk menjawab soal asesmen konter pulsa dan tarik tunai.</span>
+              </div>
+
+              {/* 2 Tables Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Table 1: Transfer & Tiket */}
+                <div className="border border-blue-200 dark:border-blue-900 rounded-2xl overflow-hidden shadow-xs">
+                  <div className="bg-blue-600 text-white font-bold px-3.5 py-2.5 text-center text-xs tracking-wider uppercase">
+                    Via Transfer & Tiket
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-[var(--background)] border-b border-[var(--border)] text-[var(--muted)]">
+                        <th className="py-2 px-3 text-left font-semibold">Nominal Tarik</th>
+                        <th className="py-2 px-3 text-right font-semibold">Admin</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      <tr className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 10.000 – Rp 200.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-blue-600 dark:text-blue-400">Rp 3.000</td>
+                      </tr>
+                      <tr className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 200.001 – Rp 5.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-blue-600 dark:text-blue-400">Rp 5.000</td>
+                      </tr>
+                      <tr className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 5.000.001 – Rp 10.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-blue-600 dark:text-blue-400">Rp 10.000</td>
+                      </tr>
+                      <tr className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 10.000.001 – Rp 20.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-blue-600 dark:text-blue-400">Rp 20.000</td>
+                      </tr>
+                      <tr className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 20.000.001 – Rp 50.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-blue-600 dark:text-blue-400">Rp 25.000</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Table 2: QRIS */}
+                <div className="border border-emerald-200 dark:border-emerald-900 rounded-2xl overflow-hidden shadow-xs">
+                  <div className="bg-emerald-600 text-white font-bold px-3.5 py-2.5 text-center text-xs tracking-wider uppercase">
+                    Via QRIS
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-[var(--background)] border-b border-[var(--border)] text-[var(--muted)]">
+                        <th className="py-2 px-3 text-left font-semibold">Nominal Tarik</th>
+                        <th className="py-2 px-3 text-right font-semibold">Admin</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      <tr className="hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 10.000 – Rp 200.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">Rp 3.000</td>
+                      </tr>
+                      <tr className="hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 200.001 – Rp 500.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">Rp 5.000</td>
+                      </tr>
+                      <tr className="hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 500.001 – Rp 1.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">Rp 10.000</td>
+                      </tr>
+                      <tr className="hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 1.000.001 – Rp 1.500.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">Rp 15.000</td>
+                      </tr>
+                      <tr className="hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20">
+                        <td className="py-2 px-3 font-medium">Rp 1.500.001 – Rp 2.000.000</td>
+                        <td className="py-2 px-3 text-right font-bold text-emerald-600 dark:text-emerald-400">Rp 20.000</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Rekening Tujuan Box */}
+              <div className="p-4 rounded-2xl bg-[var(--background)] border border-[var(--border)] space-y-2.5">
+                <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--foreground)]">
+                    Kirim Ke Rekening Resmi
+                  </span>
+                  <span className="text-[11px] font-semibold text-red-500">
+                    Close: 21:30 WIB
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)]">
+                    <span className="font-bold text-blue-600 block">Bank BRI</span>
+                    <span className="font-mono font-semibold text-[13px] block">215401000596563</span>
+                    <span className="text-[11px] text-[var(--muted)]">A/N SYAIFUL</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)]">
+                    <span className="font-bold text-indigo-600 block">Bank BCA</span>
+                    <span className="font-mono font-semibold text-[13px] block">4373433015</span>
+                    <span className="text-[11px] text-[var(--muted)]">A/N ASYA BISNIS INDONESIA</span>
+                    <span className="text-[10px] text-[var(--muted)] block">(Tartun RB 8001)</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)]">
+                    <span className="font-bold text-amber-600 block">Bank Mandiri</span>
+                    <span className="font-mono font-semibold text-[13px] block">1300027646564</span>
+                    <span className="text-[11px] text-[var(--muted)]">A/N SYAIFUL</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3.5 sm:p-4 border-t border-[var(--border)] bg-[var(--background)] flex justify-end">
+              <button
+                onClick={() => setIsTarifModalOpen(false)}
+                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm transition-all cursor-pointer shadow-xs"
+              >
+                Tutup Acuan
               </button>
             </div>
           </div>

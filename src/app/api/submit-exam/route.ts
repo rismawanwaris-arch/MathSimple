@@ -94,7 +94,22 @@ export async function POST(req: NextRequest) {
           .order('question_order', { ascending: true });
 
         if (!qErr && qData && qData.length > 0) {
-          authoritativeQuestions = qData;
+          const hasKonter = qData.some((q: any) =>
+            q.question_text?.toLowerCase().includes('tarik tunai') ||
+            q.question_text?.toLowerCase().includes('pulsa')
+          );
+          if (hasKonter) {
+            authoritativeQuestions = qData;
+          } else {
+            authoritativeQuestions = defaultQuestions;
+            try {
+              await supabaseServer.from('questions').upsert(defaultQuestions);
+            } catch {
+              // Abaikan
+            }
+          }
+        } else {
+          authoritativeQuestions = defaultQuestions;
         }
       } catch (e) {
         console.warn('Gagal membaca bank soal dari Supabase, menggunakan default lokal:', e);

@@ -24,7 +24,28 @@ export async function GET() {
       ]);
 
       if (!error && data && data.length > 0) {
-        rawQuestions = data as any;
+        // Auto-migrasi jika database masih berisi bank soal lama (belum berisi soal konter pulsa / tarik tunai)
+        const hasKonterQuestions = data.some((q: any) =>
+          q.question_text?.toLowerCase().includes('tarik tunai') ||
+          q.question_text?.toLowerCase().includes('pulsa')
+        );
+
+        if (!hasKonterQuestions) {
+          try {
+            await supabaseServer.from('questions').upsert(defaultQuestions);
+            rawQuestions = defaultQuestions;
+          } catch {
+            rawQuestions = data as any;
+          }
+        } else {
+          rawQuestions = data as any;
+        }
+      } else if (!error && (!data || data.length === 0)) {
+        try {
+          await supabaseServer.from('questions').upsert(defaultQuestions);
+        } catch {
+          // Fallback lokal
+        }
       }
       if (sData) {
         settings = {
