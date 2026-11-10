@@ -25,13 +25,12 @@ export async function GET(req: NextRequest) {
       ]);
 
       if (!error && data && data.length > 0) {
-        // Auto-migrasi jika database masih berisi bank soal lama (belum berisi soal konter pulsa / tarik tunai)
-        const hasKonterQuestions = data.some((q: any) =>
-          q.question_text?.toLowerCase().includes('tarik tunai') ||
-          q.question_text?.toLowerCase().includes('pulsa')
+        // Auto-migrasi jika database masih berisi bank soal lama (belum berisi format nominal sederhana 150.000)
+        const hasSimplified = data.some((q: any) =>
+          q.question_text?.includes('150.000')
         );
 
-        if (!hasKonterQuestions) {
+        if (!hasSimplified) {
           try {
             await supabaseServer.from('questions').upsert(defaultQuestions);
             rawQuestions = defaultQuestions;

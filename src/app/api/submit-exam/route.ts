@@ -8,13 +8,53 @@ export const dynamic = 'force-dynamic';
 
 const RL_SUBMIT_COOKIE = 'rl_submit';
 
-function normalizeAnswer(str: string): string {
-  return str
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .replace(/^rp\s*/i, 'rp ')
-    .trim();
+function checkAnswerMatch(submitted: string, correct: string): boolean {
+  const sRaw = (submitted || '').trim();
+  const cRaw = (correct || '').trim();
+  if (!sRaw || !cRaw) return false;
+
+  // 1. Exact match (case-insensitive & trimmed)
+  if (sRaw.toLowerCase() === cRaw.toLowerCase()) return true;
+
+  // 2. Normalisasi teks spasi ganda
+  const sSimple = sRaw.toLowerCase().replace(/\s+/g, ' ');
+  const cSimple = cRaw.toLowerCase().replace(/\s+/g, ' ');
+  if (sSimple === cSimple) return true;
+
+  // 3. Normalisasi nominal angka (contoh: '150.000', '150000', 'Rp 150.000', 'Rp. 150.000', '150,000')
+  const extractDigits = (val: string) =>
+    val
+      .toLowerCase()
+      .trim()
+      .replace(/^(rp\.?|idr)\s*/i, '')
+      .replace(/(,00|\.00|,-|\.-)$/, '')
+      .replace(/[.,\s]/g, '');
+
+  const sDigits = extractDigits(sRaw);
+  const cDigits = extractDigits(cRaw);
+
+  if (cDigits.length > 0 && /^\d+$/.test(cDigits)) {
+    if (sDigits === cDigits) {
+      return true;
+    }
+  }
+
+  // 4. Normalisasi teks terbilang (contoh: "seratus lima puluh ribu rupiah" vs "seratus lima puluh ribu")
+  const normText = (val: string) =>
+    val
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[.,]/g, '')
+      .replace(/\brupiah\b/g, '')
+      .trim();
+
+  const sText = normText(sRaw);
+  const cText = normText(cRaw);
+  if (sText && cText && sText === cText) {
+    return true;
+  }
+
+  return false;
 }
 
 export async function POST(req: NextRequest) {
@@ -124,11 +164,10 @@ export async function POST(req: NextRequest) {
           .order('question_order', { ascending: true });
 
         if (!qErr && qData && qData.length > 0) {
-          const hasKonter = qData.some((q: any) =>
-            q.question_text?.toLowerCase().includes('tarik tunai') ||
-            q.question_text?.toLowerCase().includes('pulsa')
+          const hasSimplified = qData.some((q: any) =>
+            q.question_text?.includes('150.000') || q.correct_answer === '150.000'
           );
-          if (hasKonter) {
+          if (hasSimplified) {
             authoritativeQuestions = qData;
           } else {
             authoritativeQuestions = defaultQuestions;
@@ -171,10 +210,7 @@ export async function POST(req: NextRequest) {
 
     authoritativeQuestions.forEach((q) => {
       const submitted = (userAnswersMap[q.id] || '').trim();
-      const normSubmitted = normalizeAnswer(submitted);
-      const normCorrect = normalizeAnswer(q.correct_answer);
-
-      const isCorrect = normSubmitted !== '' && normSubmitted === normCorrect;
+      const isCorrect = checkAnswerMatch(submitted, q.correct_answer);
       if (isCorrect) correctCount++;
 
       answerBreakdown.push({
@@ -256,34 +292,6 @@ export async function POST(req: NextRequest) {
     } else {
       dbErrorMsg = 'Database belum terhubung.';
     }
-
-    // Bangun rincian evaluasi lengkap agar peserta / penguji bisa langsung melihat mana yang salah
-    const richAnswers = authoritativeQuestions.map((q) => {
-      const submitted = (userAnswersMap[q.id] || '').trim();
-      const normSubmitted = normalizeAnswer(submitted);
-      const normCorrect = normalizeAnswer(q.correct_answer);
-      const isCorrect = normSubmitted !== '' && normSubmitted === normCorrect;
-      return {
-        question_id: q.id,
-        question_order: q.question_order,
-        category: q.category,
-        difficulty: q.difficulty,
-        question_type: q.question_type,
-        question_text: q.question_text,
-        options: q.options || null,
-        submitted_answer: submitted,
-        correct_answer: q.correct_answer,
-        is_correct: isCorrect,
-      };
-    });
-
-    const categoryStats: Record<string, { total: number; correct: number; incorrect: number }> = {};
-    richAnswers.forEach((a) => {
-      if (!categoryStats[a.category]) categoryStats[a.category] = { total: 0, correct: 0, incorrect: 0 };
-      categoryStats[a.category].total++;
-      if (a.is_correct) categoryStats[a.category].correct++;
-      else categoryStats[a.category].incorrect++;
-    });
 
     const res = NextResponse.json(
       {

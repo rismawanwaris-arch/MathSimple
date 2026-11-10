@@ -942,7 +942,7 @@ export default function Home() {
               </div>
               <div className="flex items-start gap-2 text-[var(--muted)]">
                 <span className="text-blue-600 font-bold">•</span>
-                <span><strong>Soal Nominal & Terbilang:</strong> Isian singkat untuk penulisan rupiah (contoh: <code>Rp 75.000</code>) dan kalimat terbilang.</span>
+                <span><strong>Soal Nominal & Terbilang:</strong> Isian singkat penulisan angka nominal (contoh: <code>150.000</code>) dan kalimat terbilang.</span>
               </div>
               <div className="flex items-start gap-2 text-[var(--muted)]">
                 <span className="text-blue-600 font-bold">•</span>
@@ -1182,7 +1182,7 @@ export default function Home() {
                         className="w-full px-4 py-3.5 text-base rounded-2xl border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                       />
                       <p className="text-[11px] text-[var(--muted)] italic">
-                        Perhatikan tanda baca, ejaan kata, dan pemisah ribuan (contoh: <code>Rp 75.000</code>).
+                        Perhatikan ejaan kata atau pemisah ribuan untuk angka (contoh: <code>150.000</code>).
                       </p>
                     </div>
                   )}
