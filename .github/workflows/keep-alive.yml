@@ -1,0 +1,23 @@
+name: Keep Alive Website & Database
+
+on:
+  schedule:
+    # Berjalan otomatis setiap 12 jam sekali (00:00 dan 12:00 UTC)
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Health Endpoint
+        run: |
+          echo "Mengirim ping ke website..."
+          STATUS=$(curl -s -o /tmp/health.json -w "%{http_code}" https://math-simple-three.vercel.app/api/health)
+          cat /tmp/health.json
+          echo ""
+          echo "HTTP Status: $STATUS"
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Ping gagal dengan status $STATUS"
+            exit 1
+          fi
