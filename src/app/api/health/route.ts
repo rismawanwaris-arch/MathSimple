@@ -17,7 +17,13 @@ export async function GET() {
 
       if (error) {
         dbStatus = 'error';
-        dbReason = `${error.code || 'ERR'}: ${error.message}`.slice(0, 160);
+        const rawMsg = error.message || '';
+        if (rawMsg.includes('<html') || rawMsg.includes('<!DOCTYPE')) {
+          const titleMatch = rawMsg.match(/<title>([^<]+)<\/title>/i);
+          dbReason = `HTML Error: ${titleMatch ? titleMatch[1].trim() : 'Cloudflare / Supabase server unreachable (kemungkinan project Supabase sedang Paused atau gangguan jaringan)'}`;
+        } else {
+          dbReason = `${error.code || 'ERR'}: ${rawMsg}`.slice(0, 160);
+        }
       } else {
         dbStatus = 'connected';
       }
