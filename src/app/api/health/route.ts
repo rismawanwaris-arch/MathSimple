@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const timestamp = new Date().toISOString();
   let dbStatus: 'connected' | 'not_configured' | 'error' = 'not_configured';
+  let dbReason: string | undefined;
 
   if (isServerSupabaseConfigured && supabaseServer) {
     try {
@@ -14,9 +15,15 @@ export async function GET() {
         .select('id')
         .limit(1);
 
-      dbStatus = error ? 'error' : 'connected';
-    } catch {
+      if (error) {
+        dbStatus = 'error';
+        dbReason = `${error.code || 'ERR'}: ${error.message}`.slice(0, 160);
+      } else {
+        dbStatus = 'connected';
+      }
+    } catch (err: any) {
       dbStatus = 'error';
+      dbReason = (err?.message || 'Network/fetch error').slice(0, 160);
     }
   }
 
@@ -24,6 +31,7 @@ export async function GET() {
     {
       status: 'ok',
       database: dbStatus,
+      ...(dbReason ? { reason: dbReason } : {}),
       timestamp,
     },
     {

@@ -155,9 +155,13 @@ export async function GET(req: NextRequest) {
       .order('started_at', { ascending: false });
 
     if (sessErr) {
-      let friendlyWarning = 'Gagal membaca tabel exam_sessions. Pastikan skema database sudah dijalankan dan SUPABASE_SERVICE_ROLE_KEY benar.';
+      let friendlyWarning = `Gagal membaca tabel exam_sessions (${sessErr.code || 'ERR'}: ${sessErr.message}).`;
       if (sessErr.message.includes('relation') && sessErr.message.includes('does not exist')) {
         friendlyWarning = 'Tabel "exam_sessions" belum dibuat di database Supabase Anda. Buka menu SQL Editor di Supabase, lalu jalankan file supabase/schema.sql.';
+      } else if (sessErr.message.toLowerCase().includes('permission denied')) {
+        friendlyWarning = 'Akses ke tabel exam_sessions ditolak (permission denied). Pastikan SUPABASE_SERVICE_ROLE_KEY di Vercel diisi dengan "service_role" key (bukan anon key).';
+      } else if (sessErr.message.toLowerCase().includes('invalid api key') || sessErr.message.toLowerCase().includes('jwt')) {
+        friendlyWarning = 'SUPABASE_SERVICE_ROLE_KEY tidak valid. Periksa kembali key di Project Settings → API Supabase dan update di Vercel.';
       }
       return NextResponse.json({
         sessions: [],
